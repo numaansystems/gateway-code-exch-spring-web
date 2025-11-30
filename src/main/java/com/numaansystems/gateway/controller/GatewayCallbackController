@@ -1,0 +1,215 @@
+package com.example.legacyapp.controller;
+
+import org. apache.commons.httpclient.HttpClient;
+import org.apache. commons.httpclient.HttpStatus;
+import org.apache.commons.httpclient.methods.PostMethod;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web. bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
+
+import javax.servlet.http.HttpServletRequest;
+import javax. servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import java.io.BufferedReader;
+import java.io. InputStreamReader;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Spring Controller to handle OAuth2 callback from the gateway. 
+ * 
+ * Receives the exchange token, validates it with the gateway,
+ * and creates a session for the authenticated user.
+ */
+@Controller
+public class GatewayCallbackController {
+
+    private static final String GATEWAY_URL = "http://localhost:9090/gateway";
+
+    @RequestMapping(value = "/auth/callback", method = RequestMethod.GET)
+    public void handleCallback(@RequestParam("token") String token,
+                              @RequestParam(value = "returnUrl", required = false) String returnUrl,
+                              HttpServletRequest request,
+                              HttpServletResponse response,
+                              HttpSession session) throws Exception {
+
+        System.out.println("Gateway callback received");
+        System.out.println("Token: " + token);
+        System.out.println("ReturnUrl: " + returnUrl);
+
+        if (token == null || token.isEmpty()) {
+            System. err.println("Error: No token received in callback");
+            response.sendRedirect(request.getContextPath() + "/login.html? error=no_token");
+            return;
+        }
+
+        // Validate token with gateway
+        TokenValidationResult validationResult = validateToken(token);
+
+        if (validationResult.success) {
+            // Create session with user data
+            session.setAttribute("authenticated", Boolean.TRUE);
+            session.setAttribute("username", validationResult.username);
+            session.setAttribute("email", validationResult.email);
+            session.setAttribute("name", validationResult.name);
+            session.setAttribute("authorities", validationResult.authorities);
+
+            System.out.println("Authentication successful for user: " + validationResult.username);
+            System. out.println("Authorities: " + validationResult.authorities);
+
+            // Redirect to returnUrl or default page
+            String redirectTo = (returnUrl != null && !returnUrl.isEmpty()) 
+                ? returnUrl 
+                : request.getContextPath() + "/index.html";
+
+            System.out.println("Redirecting to: " + redirectTo);
+            response.sendRedirect(redirectTo);
+
+        } else {
+            System. err.println("Token validation failed: " + validationResult.error);
+            response.sendRedirect(request.getContextPath() + 
+                "/login.html?error=" + encodeURIComponent(validationResult.error));
+        }
+    }
+
+    /**
+     * Validate token with gateway using Apache Commons HttpClient 3.x (Java 6 compatible)
+     */
+    private TokenValidationResult validateToken(String token) {
+        TokenValidationResult result = new TokenValidationResult();
+        
+        HttpClient httpClient = new HttpClient();
+        PostMethod postMethod = new PostMethod(GATEWAY_URL + "/auth/validate-token");
+
+        try {
+            // Set request parameters
+            postMethod.addParameter("token", token);
+            postMethod.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+
+            // Execute request
+            int statusCode = httpClient.executeMethod(postMethod);
+
+            if (statusCode == HttpStatus.SC_OK) {
+                // Read response
+                BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(postMethod. getResponseBodyAsStream(), "UTF-8"));
+                
+                StringBuilder responseBody = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    responseBody.append(line);
+                }
+
+                // Parse JSON response
+                String jsonResponse = responseBody. toString();
+                result.success = jsonResponse.contains("\"success\":true") || 
+                                jsonResponse.contains("\"success\": true");
+
+                if (result.success) {
+                    result.username = extractJsonValue(jsonResponse, "username");
+                    result.email = extractJsonValue(jsonResponse, "email");
+                    result.name = extractJsonValue(jsonResponse, "name");
+                    result.authorities = extractJsonArray(jsonResponse, "authorities");
+                } else {
+                    result.error = extractJsonValue(jsonResponse, "error");
+                }
+
+            } else {
+                result. success = false;
+                result.error = "HTTP " + statusCode + ": " + postMethod.getStatusText();
+            }
+
+        } catch (Exception e) {
+            System.err.println("Error validating token: " + e.getMessage());
+            e.printStackTrace();
+            result.success = false;
+            result.error = "Token validation error: " + e.getMessage();
+        } finally {
+            postMethod.releaseConnection();
+        }
+
+        return result;
+    }
+
+    /**
+     * Simple JSON value extractor (for Java 6 without JSON libraries)
+     */
+    private String extractJsonValue(String json, String key) {
+        String searchKey = "\"" + key + "\":\"";
+        int startIndex = json.indexOf(searchKey);
+        if (startIndex == -1) {
+            searchKey = "\"" + key + "\": \"";
+            startIndex = json. indexOf(searchKey);
+        }
+        
+        if (startIndex != -1) {
+            startIndex += searchKey.length();
+            int endIndex = json.indexOf("\"", startIndex);
+            if (endIndex != -1) {
+                return json.substring(startIndex, endIndex);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Simple JSON array extractor
+     */
+    private List extractJsonArray(String json, String key) {
+        List result = new ArrayList();
+        String searchKey = "\"" + key + "\":[";
+        int startIndex = json.indexOf(searchKey);
+        
+        if (startIndex == -1) {
+            searchKey = "\"" + key + "\": [";
+            startIndex = json.indexOf(searchKey);
+        }
+
+        if (startIndex != -1) {
+            startIndex += searchKey.length();
+            int endIndex = json.indexOf("]", startIndex);
+            if (endIndex != -1) {
+                String arrayContent = json. substring(startIndex, endIndex);
+                String[] items = arrayContent.split(",");
+                for (int i = 0; i < items.length; i++) {
+                    String item = items[i]. trim();
+                    if (item.startsWith("\"")) {
+                        item = item. substring(1);
+                    }
+                    if (item.endsWith("\"")) {
+                        item = item.substring(0, item.length() - 1);
+                    }
+                    if (! item.isEmpty()) {
+                        result.add(item);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * URL encode (Java 6 compatible)
+     */
+    private String encodeURIComponent(String s) {
+        try {
+            return java.net. URLEncoder.encode(s, "UTF-8")
+                .replaceAll("\\+", "%20");
+        } catch (java.io.UnsupportedEncodingException e) {
+            return s;
+        }
+    }
+
+    /**
+     * Inner class to hold token validation result
+     */
+    private static class TokenValidationResult {
+        boolean success;
+        String username;
+        String email;
+        String name;
+        List authorities;
+        String error;
+    }
+}
