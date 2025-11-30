@@ -1,0 +1,142 @@
+package com.example.legacyapp.filter;
+
+import javax.servlet.*;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http. HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.List;
+
+/**
+ * Servlet Filter to check authentication status for protected resources. 
+ * 
+ * If user is not authenticated, redirects to gateway for OAuth2 login.
+ */
+public class GatewayAuthenticationFilter implements Filter {
+
+    private String gatewayUrl;
+    private List excludedPaths;
+
+    public void init(FilterConfig filterConfig) throws ServletException {
+        // Read gateway URL from web.xml init-param
+        gatewayUrl = filterConfig.getInitParameter("gatewayUrl");
+        if (gatewayUrl == null || gatewayUrl.isEmpty()) {
+            gatewayUrl = "http://localhost:9090/gateway";
+        }
+
+        // Read excluded paths (comma-separated)
+        String excludedPathsParam = filterConfig.getInitParameter("excludedPaths");
+        if (excludedPathsParam != null && !excludedPathsParam. isEmpty()) {
+            excludedPaths = Arrays.asList(excludedPathsParam.split(","));
+        } else {
+            excludedPaths = Arrays.asList(
+                "/auth/callback",
+                "/auth/logout",
+                "/login.html",
+                "/public",
+                "/resources",
+                "/static",
+                "/gwt"
+            );
+        }
+
+        System.out.println("==========================================");
+        System.out.println("GatewayAuthenticationFilter INITIALIZED");
+        System.out. println("Gateway URL: " + gatewayUrl);
+        System.out.println("Excluded Paths: " + excludedPaths);
+        System.out.println("==========================================");
+    }
+
+    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
+            throws IOException, ServletException {
+
+        HttpServletRequest httpRequest = (HttpServletRequest) request;
+        HttpServletResponse httpResponse = (HttpServletResponse) response;
+        HttpSession session = httpRequest. getSession(false);
+
+        String requestURI = httpRequest.getRequestURI();
+        String contextPath = httpRequest.getContextPath();
+        String path = requestURI.substring(contextPath. length());
+
+        // Debug logging
+        System.out.println("Filter processing: " + path);
+
+        // Check if path is excluded from authentication
+        if (isExcludedPath(path)) {
+            System.out.println("Path excluded from authentication: " + path);
+            chain.doFilter(request, response);
+            return;
+        }
+
+        // Check if user is authenticated
+        Boolean authenticated = (session != null) 
+            ?  (Boolean) session.getAttribute("authenticated") 
+            : null;
+
+        if (authenticated == null || !authenticated. booleanValue()) {
+            // User not authenticated - redirect to gateway
+            String fullRequestUrl = getFullRequestUrl(httpRequest);
+            String returnUrl = fullRequestUrl;
+
+            String redirectUrl = gatewayUrl + "/auth/initiate? returnUrl=" 
+                + encodeURIComponent(returnUrl);
+
+            System.out.println("User not authenticated. Redirecting to: " + redirectUrl);
+            httpResponse.sendRedirect(redirectUrl);
+            return;
+        }
+
+        // User is authenticated - log and continue
+        System.out.println("User authenticated: " + session.getAttribute("username"));
+        chain.doFilter(request, response);
+    }
+
+    public void destroy() {
+        System.out.println("GatewayAuthenticationFilter destroyed");
+    }
+
+    /**
+     * Check if the path is excluded from authentication
+     */
+    private boolean isExcludedPath(String path) {
+        for (int i = 0; i < excludedPaths.size(); i++) {
+            String excludedPath = ((String) excludedPaths.get(i)).trim();
+            if (path.startsWith(excludedPath)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Get the full request URL including query parameters
+     */
+    private String getFullRequestUrl(HttpServletRequest request) {
+        StringBuffer requestURL = request.getRequestURL();
+        String queryString = request.getQueryString();
+
+        if (queryString == null) {
+            return requestURL.toString();
+        } else {
+            return requestURL. append('?').append(queryString).toString();
+        }
+    }
+
+    /**
+     * URL encode a string (Java 6 compatible)
+     */
+    private String encodeURIComponent(String s) {
+        try {
+            return java.net.URLEncoder. encode(s, "UTF-8")
+                .replaceAll("\\+", "%20")
+                .replaceAll("\\%21", "!")
+                .replaceAll("\\%27", "'")
+                . replaceAll("\\%28", "(")
+                .replaceAll("\\%29", ")")
+                .replaceAll("\\%7E", "~");
+        } catch (java.io.UnsupportedEncodingException e) {
+            return s;
+        }
+    }
+}
