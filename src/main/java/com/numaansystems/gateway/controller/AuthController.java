@@ -4,34 +4,23 @@ import com.numaansystems.gateway.service.ExchangeTokenService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
-import org.slf4j.Logger;
+import org.slf4j. Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory. annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org. springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security. core.context.SecurityContextHolder;
+import org.springframework.security. web.authentication.logout.SecurityContextLogoutHandler;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
-import java.util.HashMap;
+import java.net.MalformedURLException;
+import java.net. URL;
+import java.net. URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util. HashMap;
 import java.util.Map;
 
-/**
- * REST controller for authentication operations.
- * 
- * <p>Provides endpoints for initiating OAuth2 authentication, validating
- * exchange tokens, logout, and health checks.</p>
- * 
- * <h2>Endpoints</h2>
- * <ul>
- *   <li>GET /auth/initiate - Start OAuth2 authentication flow</li>
- *   <li>POST /auth/validate-token - Validate exchange token (backend-to-backend)</li>
- *   <li>GET /auth/logout - Logout and invalidate session</li>
- *   <li>GET /auth/health - Service health check</li>
- * </ul>
- * 
- * @author Numaan Systems
- * @version 0.1. 0
- */
 @RestController
 @RequestMapping("/auth")
 public class AuthController {
@@ -40,169 +29,127 @@ public class AuthController {
 
     private final ExchangeTokenService exchangeTokenService;
 
-    /**
-     * Constructor injection of exchange token service.
-     * 
-     * @param exchangeTokenService service for token operations
-     */
+    @Value("${AZURE_TENANT_ID:}")
+    private String azureTenantId;
+
     public AuthController(ExchangeTokenService exchangeTokenService) {
         this.exchangeTokenService = exchangeTokenService;
     }
 
-    /**
-     * Initiates the OAuth2 authentication flow with Azure AD.
-     * 
-     * <p>This endpoint is called by the legacy application to start authentication. 
-     * The returnUrl is stored in the session and the user is redirected to Azure AD
-     * for authentication.</p>
-     * 
-     * <h3>Usage Example</h3>
-     * <pre>
-     * // Normal login (reuse existing session if available)
-     * window.location. href = 'http://gateway.example.com/gateway/auth/initiate?returnUrl=' 
-     *                       + encodeURIComponent('http://app.example.com/dashboard');
-     * 
-     * // Force re-authentication (always prompt for credentials)
-     * window. location.href = 'http://gateway.example.com/gateway/auth/initiate? returnUrl=' 
-     *                       + encodeURIComponent('http://app.example.com/dashboard')
-     *                       + '&forceReauth=true';
-     * </pre>
-     * 
-     * @param returnUrl the URL to return to after successful authentication (required)
-     * @param forceReauth if true, forces re-authentication even if user is already logged in (optional, default: false)
-     * @param request the HTTP request
-     * @param response the HTTP response
-     * @param session the HTTP session
-     * @param authentication current authentication (may be null)
-     * @throws IOException if redirect fails
-     */
-
     @GetMapping("/initiate")
-public void initiateAuth(@RequestParam String returnUrl,
-                        @RequestParam(required = false, defaultValue = "true") boolean forceReauth,
-                        HttpServletRequest request,
-                        HttpServletResponse response,
-                        HttpSession session,
-                        Authentication authentication) throws IOException {
-    
-    logger.info("Authentication initiated with returnUrl: {}", returnUrl);
-    
-    // Always force re-authentication
-    boolean isAuthenticated = authentication != null 
-        && authentication.isAuthenticated() 
-        && !"anonymousUser".equals(authentication.getName());
-    
-    if (isAuthenticated) {
-        logger. info("Forcing re-authentication for user: {}", authentication.getName());
+    public void initiateAuth(@RequestParam String returnUrl,
+                            @RequestParam(required = false, defaultValue = "true") boolean forceReauth,
+                            HttpServletRequest request,
+                            HttpServletResponse response,
+                            Authentication authentication) throws IOException {
+        
+        logger.info("==================== AUTH INITIATE ====================");
+        logger.info("ReturnUrl: {}", returnUrl);
+        logger. info("ForceReauth: {}", forceReauth);
+        logger.info("Current authentication: {}", authentication != null ? authentication.getName() : "none");
+        
+        // ALWAYS clear existing authentication state
+        HttpSession session = request.getSession(false);
         if (session != null) {
+            logger.info("Invalidating existing session: {}", session.getId());
             session.invalidate();
         }
+        
+        // Clear Spring Security context
+        if (authentication != null) {
+            logger.info("Clearing authentication for user: {}", authentication.getName());
+            new SecurityContextLogoutHandler().logout(request, response, authentication);
+        }
         SecurityContextHolder.clearContext();
+        
+        // Create fresh session
         session = request.getSession(true);
-    } else {
-        if (session == null) {
-            session = request.getSession(true);
+        logger.info("Created new session: {}", session.getId());
+        
+        // Parse returnUrl to build callback URL
+        try {
+            String callbackUrl = buildCallbackUrl(returnUrl);
+            
+            // Store both URLs in session
+            session.setAttribute("returnUrl", callbackUrl);  // Where gateway redirects (callback servlet)
+            session.setAttribute("finalReturnUrl", returnUrl);  // Where user ultimately goes (home.html)
+            
+            logger.info("Stored in session:");
+            logger.info("  returnUrl (callback): {}", callbackUrl);
+            logger.info("  finalReturnUrl (destination): {}", returnUrl);
+            
+        } catch (MalformedURLException e) {
+            logger.error("Invalid returnUrl: {}", returnUrl, e);
+            response.sendRedirect("/");
+            return;
         }
+        
+        // Set forceReauth flag to add prompt=login to Azure AD request
+        if (forceReauth) {
+            session.setAttribute("forceReauth", true);
+            logger.info("ForceReauth flag set - will add prompt=login to Azure AD request");
+        }
+        
+        // Redirect to OAuth2 authorization endpoint
+        String redirectUrl = request.getContextPath() + "/oauth2/authorization/azure";
+        logger.info("Redirecting to: {}", redirectUrl);
+        logger.info("=======================================================");
+        
+        response.sendRedirect(redirectUrl);
     }
-    
-    // Store ORIGINAL returnUrl (where user wanted to go)
-    session.setAttribute("finalReturnUrl", returnUrl);
-    
-    // Build callback URL for the legacy app
-    String callbackUrl = buildCallbackUrl(returnUrl);
-    session.setAttribute("returnUrl", callbackUrl);
-    
-    if (forceReauth) {
-        session.setAttribute("forceReauth", true);
-    }
-    
-    logger.info("Final return URL: {}", returnUrl);
-    logger.info("Callback URL: {}", callbackUrl);
-    
-    String redirectUrl = request.getContextPath() + "/oauth2/authorization/azure";
-    response.sendRedirect(redirectUrl);
-}
 
-/**
- * Extract callback URL from returnUrl
- * E.g., http://localhost:8080/myapp/index.html -> http://localhost:8080/myapp/auth/callback
- */
-private String buildCallbackUrl(String returnUrl) throws java.net.MalformedURLException {
-    java.net.URL url = new java.net.URL(returnUrl);
-    
-    String protocol = url.getProtocol();
-    String host = url.getHost();
-    int port = url.getPort();
-    String path = url.getPath();
-    
-    StringBuilder baseUrl = new StringBuilder();
-    baseUrl.append(protocol).append("://").append(host);
-    if (port != -1 && port != 80 && port != 443) {
-        baseUrl. append(":").append(port);
-    }
-    
-    String contextPath = "";
-    if (path != null && !path.isEmpty()) {
-        int secondSlash = path.indexOf('/', 1);
-        if (secondSlash > 0) {
-            contextPath = path.substring(0, secondSlash);
-        } else if (path.length() > 1 && !path.contains(". ")) {
-            contextPath = path;
-        }
-    }
-    
-    return baseUrl.toString() + contextPath + "/auth/callback";
-}
     /**
-     * Validates an exchange token and returns user information.
-     * 
-     * <p>This endpoint should be called by the legacy application's backend
-     * (server-to-server) to validate the exchange token and retrieve user details.  
-     * The token is single-use and will be removed after validation.</p>
-     * 
-     * <h3>Success Response (200 OK)</h3>
-     * <pre>
-     * {
-     *   "success": true,
-     *   "username": "user@example.com",
-     *   "email": "user@example. com",
-     *   "name": "John Doe",
-     *   "authorities": ["ROLE_USER", "ROLE_ADMIN"]
-     * }
-     * </pre>
-     * 
-     * <h3>Error Response (401 Unauthorized)</h3>
-     * <pre>
-     * {
-     *   "success": false,
-     *   "error": "Invalid or expired token"
-     * }
-     * </pre>
-     * 
-     * @param token the exchange token to validate (required)
-     * @param request the HTTP request (for logging)
-     * @return response entity with user data or error message
+     * Build callback URL from returnUrl
+     * E.g., http://localhost:8080/myapp/home.html -> http://localhost:8080/myapp/auth/callback
      */
+    private String buildCallbackUrl(String returnUrl) throws MalformedURLException {
+        URL url = new URL(returnUrl);
+        
+        String protocol = url.getProtocol();
+        String host = url.getHost();
+        int port = url.getPort();
+        String path = url.getPath();
+        
+        // Build base URL
+        StringBuilder baseUrl = new StringBuilder();
+        baseUrl.append(protocol). append("://").append(host);
+        if (port != -1 && port != 80 && port != 443) {
+            baseUrl.append(":").append(port);
+        }
+        
+        // Extract context path from path
+        // E.g., /myapp/home.html -> /myapp
+        String contextPath = "";
+        if (path != null && !path.isEmpty()) {
+            int secondSlash = path.indexOf('/', 1);
+            if (secondSlash > 0) {
+                contextPath = path.substring(0, secondSlash);
+            } else if (path.length() > 1 && ! path.contains(". ")) {
+                contextPath = path;
+            }
+        }
+        
+        return baseUrl.toString() + contextPath + "/auth/callback";
+    }
+
     @PostMapping("/validate-token")
     public ResponseEntity<Map<String, Object>> validateToken(@RequestParam String token,
                                                              HttpServletRequest request) {
         
         logger.info("Token validation requested from: {}", request.getRemoteAddr());
         
-        // Validate and remove token (single-use)
         ExchangeTokenService.ExchangeTokenData tokenData = exchangeTokenService.validateAndRemoveToken(token);
         
         if (tokenData == null) {
             logger.warn("Token validation failed: invalid or expired token");
             Map<String, Object> errorResponse = new HashMap<>();
             errorResponse.put("success", false);
-            errorResponse.put("error", "Invalid or expired token");
-            return ResponseEntity.status(401).body(errorResponse);
+            errorResponse. put("error", "Invalid or expired token");
+            return ResponseEntity. status(401).body(errorResponse);
         }
         
         logger.info("Token validated successfully for user: {}", tokenData.username);
         
-        // Build success response with user data
         Map<String, Object> successResponse = new HashMap<>();
         successResponse.put("success", true);
         successResponse.put("username", tokenData.username);
@@ -213,71 +160,84 @@ private String buildCallbackUrl(String returnUrl) throws java.net.MalformedURLEx
         return ResponseEntity. ok(successResponse);
     }
 
-    /**
-     * Logs out the user and invalidates the session.
-     * 
-     * <p>After logout, the user is redirected to the specified returnUrl
-     * or to the root path if no returnUrl is provided.</p>
-     * 
-     * <h3>Usage Example</h3>
-     * <pre>
-     * window.location.href = 'http://gateway.example.com/gateway/auth/logout?returnUrl=' 
-     *                       + encodeURIComponent('http://app.example.com/');
-     * </pre>
-     * 
-     * @param returnUrl the URL to redirect to after logout (optional)
-     * @param session the HTTP session to invalidate
-     * @param response the HTTP response for redirect
-     * @throws IOException if redirect fails
-     */
     @GetMapping("/logout")
     public void logout(@RequestParam(required = false) String returnUrl,
                       HttpSession session,
-                      HttpServletResponse response) throws IOException {
+                      HttpServletRequest request,
+                      HttpServletResponse response,
+                      Authentication authentication) throws IOException {
         
-        logger.info("Logout requested");
+        logger.info("==================== LOGOUT ====================");
+        logger. info("ReturnUrl: {}", returnUrl);
+        logger.info("Current user: {}", authentication != null ? authentication.getName() : "none");
         
-        // Invalidate session
+        // Invalidate local session
         if (session != null) {
-            session. invalidate();
-            logger.info("Session invalidated");
+            logger.info("Invalidating session: {}", session.getId());
+            session.invalidate();
         }
         
-        // Clear security context
+        // Clear Spring Security context
+        if (authentication != null) {
+            new SecurityContextLogoutHandler().logout(request, response, authentication);
+        }
         SecurityContextHolder.clearContext();
-        logger.info("Security context cleared");
         
-        // Redirect to returnUrl or root
-        String redirectUrl = (returnUrl != null && !returnUrl.isEmpty()) ?  returnUrl : "/";
-        logger.info("Redirecting to: {}", redirectUrl);
-        response.sendRedirect(redirectUrl);
+        // Build Azure AD logout URL
+        String azureLogoutUrl = buildAzureLogoutUrl(returnUrl, request);
+        
+        logger.info("Redirecting to Azure AD logout: {}", azureLogoutUrl);
+        logger.info("=================================================");
+        
+        response.sendRedirect(azureLogoutUrl);
     }
 
     /**
-     * Health check endpoint for monitoring. 
-     * 
-     * <p>Returns service status and metrics including the number of active
-     * exchange tokens currently in memory.</p>
-     * 
-     * <h3>Response Example</h3>
-     * <pre>
-     * {
-     *   "status": "UP",
-     *   "service": "azure-ad-gateway",
-     *   "version": "1.0.0",
-     *   "activeTokens": 5
-     * }
-     * </pre>
-     * 
-     * @return response entity with health information
+     * Build Azure AD logout URL with post_logout_redirect_uri
      */
+    private String buildAzureLogoutUrl(String returnUrl, HttpServletRequest request) {
+        if (azureTenantId == null || azureTenantId.isEmpty()) {
+            logger.warn("AZURE_TENANT_ID not configured, skipping Azure AD logout");
+            return returnUrl != null ? returnUrl : "/";
+        }
+        
+        // Determine where to redirect after Azure AD logout
+        String postLogoutRedirectUri;
+        if (returnUrl != null && !returnUrl.isEmpty()) {
+            postLogoutRedirectUri = returnUrl;
+        } else {
+            // Default to gateway root
+            String scheme = request.getScheme();
+            String serverName = request.getServerName();
+            int serverPort = request. getServerPort();
+            String contextPath = request.getContextPath();
+            
+            String portPart = "";
+            if ((scheme. equals("http") && serverPort != 80) || 
+                (scheme.equals("https") && serverPort != 443)) {
+                portPart = ":" + serverPort;
+            }
+            
+            postLogoutRedirectUri = scheme + "://" + serverName + portPart + contextPath + "/";
+        }
+        
+        // Build Azure AD logout URL
+        String azureLogoutUrl = String.format(
+            "https://login.microsoftonline.com/%s/oauth2/v2.0/logout?post_logout_redirect_uri=%s",
+            azureTenantId,
+            URLEncoder.encode(postLogoutRedirectUri, StandardCharsets.UTF_8)
+        );
+        
+        return azureLogoutUrl;
+    }
+
     @GetMapping("/health")
     public ResponseEntity<Map<String, Object>> health() {
         Map<String, Object> healthInfo = new HashMap<>();
         healthInfo.put("status", "UP");
         healthInfo.put("service", "azure-ad-gateway");
         healthInfo.put("version", "1.0.0");
-        healthInfo.put("activeTokens", exchangeTokenService. getActiveTokenCount());
+        healthInfo.put("activeTokens", exchangeTokenService.getActiveTokenCount());
         
         return ResponseEntity.ok(healthInfo);
     }
