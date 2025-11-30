@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app xmlns="http://java. sun.com/xml/ns/javaee"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://java.sun.com/xml/ns/javaee 
+         http://java.sun.com/xml/ns/javaee/web-app_2_5.xsd"
+         version="2.5">
+
+    <display-name>Legacy Application with Gateway Authentication</display-name>
+
+    <!-- ========================================== -->
+    <!-- GATEWAY AUTHENTICATION FILTER             -->
+    <!-- ========================================== -->
+    <filter>
+        <filter-name>GatewayAuthenticationFilter</filter-name>
+        <filter-class>com.example.legacyapp.filter. GatewayAuthenticationFilter</filter-class>
+        <init-param>
+            <param-name>gatewayUrl</param-name>
+            <param-value>http://localhost:9090/gateway</param-value>
+        </init-param>
+        <init-param>
+            <param-name>excludedPaths</param-name>
+            <!-- Comma-separated list of paths that don't require authentication -->
+            <param-value>/auth/callback,/auth/logout,/login.html,/public,/resources,/static,/gwt</param-value>
+        </init-param>
+    </filter>
+
+    <filter-mapping>
+        <filter-name>GatewayAuthenticationFilter</filter-name>
+        <url-pattern>/*</url-pattern>
+        <dispatcher>REQUEST</dispatcher>
+        <dispatcher>FORWARD</dispatcher>
+    </filter-mapping>
+
+    <!-- ========================================== -->
+    <!-- GATEWAY CALLBACK SERVLET                  -->
+    <!-- Handles OAuth2 callback with token        -->
+    <!-- ========================================== -->
+    <servlet>
+        <servlet-name>GatewayCallbackServlet</servlet-name>
+        <servlet-class>com.example.legacyapp.servlet.GatewayCallbackServlet</servlet-class>
+        <init-param>
+            <param-name>gatewayUrl</param-name>
+            <param-value>http://localhost:9090/gateway</param-value>
+        </init-param>
+        <load-on-startup>1</load-on-startup>
+    </servlet>
+
+    <servlet-mapping>
+        <servlet-name>GatewayCallbackServlet</servlet-name>
+        <url-pattern>/auth/callback</url-pattern>
+    </servlet-mapping>
+
+    <!-- ========================================== -->
+    <!-- GATEWAY LOGOUT SERVLET                    -->
+    <!-- Handles logout and session invalidation   -->
+    <!-- ========================================== -->
+    <servlet>
+        <servlet-name>GatewayLogoutServlet</servlet-name>
+        <servlet-class>com.example. legacyapp.servlet.GatewayLogoutServlet</servlet-class>
+        <init-param>
+            <param-name>gatewayUrl</param-name>
+            <param-value>http://localhost:9090/gateway</param-value>
+        </init-param>
+        <load-on-startup>2</load-on-startup>
+    </servlet>
+
+    <servlet-mapping>
+        <servlet-name>GatewayLogoutServlet</servlet-name>
+        <url-pattern>/auth/logout</url-pattern>
+    </servlet-mapping>
+
+    <!-- ========================================== -->
+    <!-- YOUR EXISTING SPRING CONFIGURATION        -->
+    <!-- Make sure Spring doesn't map to /*        -->
+    <!-- ========================================== -->
+    <!-- 
+    <servlet>
+        <servlet-name>springDispatcher</servlet-name>
+        <servlet-class>org. springframework.web.servlet.DispatcherServlet</servlet-class>
+        <load-on-startup>3</load-on-startup>
+    </servlet>
+
+    <servlet-mapping>
+        <servlet-name>springDispatcher</servlet-name>
+        <url-pattern>*. htm</url-pattern>
+    </servlet-mapping>
+
+    <servlet-mapping>
+        <servlet-name>springDispatcher</servlet-name>
+        <url-pattern>/spring/*</url-pattern>
+    </servlet-mapping>
+    -->
+
+    <!-- ========================================== -->
+    <!-- SESSION CONFIGURATION                     -->
+    <!-- ========================================== -->
+    <session-config>
+        <session-timeout>30</session-timeout>
+    </session-config>
+
+    <!-- ========================================== -->
+    <!-- WELCOME FILE LIST                         -->
+    <!-- ========================================== -->
+    <welcome-file-list>
+        <welcome-file>index.html</welcome-file>
+        <welcome-file>index.jsp</welcome-file>
+    </welcome-file-list>
+
+</web-app>
