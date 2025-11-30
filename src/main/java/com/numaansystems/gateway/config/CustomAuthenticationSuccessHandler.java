@@ -1,55 +1,28 @@
-package com. numaansystems.gateway.config;
+package com.numaansystems.gateway.config;
 
-import com.numaansystems.gateway.service. ExchangeTokenService;
+import com.numaansystems.gateway.service.ExchangeTokenService;
 import com.numaansystems.gateway. service.UserAuthorityService;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet. http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
-import org.slf4j.Logger;
+import org.slf4j. Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core. GrantedAuthority;
-import org.springframework.security.oauth2. client.authentication.OAuth2AuthenticationToken;
-import org.springframework. security.oauth2.core.user.OAuth2User;
+import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
+import org. springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /**
  * Custom authentication success handler for Azure AD OAuth2 login.
- * 
- * <p>This handler is invoked after successful OAuth2 authentication with Azure AD.
- * It creates a short-lived exchange token and redirects the user back to the
- * originating legacy application. </p>
- * 
- * <h2>Token Exchange Flow</h2>
- * <ol>
- *   <li>User successfully authenticates with Azure AD</li>
- *   <li>Handler extracts user information from OAuth2User</li>
- *   <li>Merges authorities from Azure AD, OAuth2 scopes, and optional database</li>
- *   <li>Creates single-use exchange token (2-minute TTL)</li>
- *   <li>Redirects to legacy app's callback URL with token</li>
- *   <li>Legacy app validates token via backend API call</li>
- * </ol>
- * 
- * <h2>Security Features</h2>
- * <ul>
- *   <li>Domain validation prevents open redirect vulnerabilities</li>
- *   <li>Supports exact domain and subdomain matching</li>
- *   <li>Token contains user info and merged authorities</li>
- *   <li>Comprehensive audit logging</li>
- * </ul>
- * 
- * @author Numaan Systems
- * @version 0.1.0
  */
 @Component
 public class CustomAuthenticationSuccessHandler implements AuthenticationSuccessHandler {
@@ -64,27 +37,10 @@ public class CustomAuthenticationSuccessHandler implements AuthenticationSuccess
     @Value("${gateway.allowed-redirect-domains}")
     private List<String> allowedRedirectDomains;
 
-    /**
-     * Constructor injection of exchange token service.
-     * 
-     * @param exchangeTokenService service for creating and managing exchange tokens
-     */
     public CustomAuthenticationSuccessHandler(ExchangeTokenService exchangeTokenService) {
         this.exchangeTokenService = exchangeTokenService;
     }
 
-    /**
-     * Handles successful OAuth2 authentication. 
-     * 
-     * <p>This method is called by Spring Security after the user successfully
-     * authenticates with Azure AD. It extracts user information, creates an
-     * exchange token, and redirects back to the legacy application.</p>
-     * 
-     * @param request the HTTP request
-     * @param response the HTTP response
-     * @param authentication the authentication object containing OAuth2 user details
-     * @throws IOException if redirect fails
-     */
     @Override
     public void onAuthenticationSuccess(HttpServletRequest request,
                                        HttpServletResponse response,
@@ -92,6 +48,9 @@ public class CustomAuthenticationSuccessHandler implements AuthenticationSuccess
         
         HttpSession session = request.getSession(false);
         String returnUrl = (String) (session != null ? session.getAttribute("returnUrl") : null);
+
+        logger.info("Authentication success handler invoked");
+        logger.info("ReturnUrl from session: {}", returnUrl);
 
         if (returnUrl != null && ! returnUrl.isEmpty()) {
             // Validate domain to prevent open redirect attacks
@@ -127,15 +86,15 @@ public class CustomAuthenticationSuccessHandler implements AuthenticationSuccess
 
             // 2.  Add OAuth2 granted authorities (scopes)
             for (GrantedAuthority authority : oauth2User.getAuthorities()) {
-                authorities.add(authority. getAuthority());
+                authorities.add(authority.getAuthority());
             }
             logger.debug("Added OAuth2 authorities for user {}", username);
 
-            // 3.  Load additional authorities from database (if service is available)
+            // 3. Load additional authorities from database (if service is available)
             if (userAuthorityService != null) {
                 try {
                     Collection<String> dbAuthorities = userAuthorityService.loadAuthoritiesByUsername(username);
-                    authorities. addAll(dbAuthorities);
+                    authorities.addAll(dbAuthorities);
                     logger.info("Added {} database authorities for user {}", dbAuthorities.size(), username);
                 } catch (Exception e) {
                     logger.warn("Failed to load database authorities for user {}: {}", username, e.getMessage());
@@ -146,18 +105,16 @@ public class CustomAuthenticationSuccessHandler implements AuthenticationSuccess
             String token = exchangeTokenService.createToken(username, email, name, authorities);
             logger.info("Created exchange token for user {} with {} authorities", username, authorities.size());
 
-            // Build callback URL with token
-            String baseUrl = extractBaseUrl(returnUrl);
-            String encodedReturnUrl = URLEncoder.encode(returnUrl, StandardCharsets.UTF_8);
-            String callbackUrl = baseUrl + "/auth/callback? token=" + token + "&returnUrl=" + encodedReturnUrl;
+            // Build callback URL with context path preserved
+            String callbackUrl = buildCallbackUrl(returnUrl, token);
 
             // Clean up session
             if (session != null) {
                 session.removeAttribute("returnUrl");
             }
 
-            logger.info("Redirecting user {} to callback URL", username);
-            response.sendRedirect(callbackUrl);
+            logger.info("Redirecting user {} to callback URL: {}", username, callbackUrl);
+            response. sendRedirect(callbackUrl);
         } else {
             logger.warn("No returnUrl found in session, redirecting to root");
             response.sendRedirect("/");
@@ -165,14 +122,68 @@ public class CustomAuthenticationSuccessHandler implements AuthenticationSuccess
     }
 
     /**
+     * Build callback URL from returnUrl by extracting protocol, host, port, and context path. 
+     * Then append /auth/callback with token parameter.
+     * 
+     * Examples:
+     *   Input:  http://localhost:8080/myapp/index. html
+     *   Output: http://localhost:8080/myapp/auth/callback?token=xxx
+     * 
+     *   Input:  http://localhost:8080/index.html
+     *   Output: http://localhost:8080/auth/callback?token=xxx
+     */
+    private String buildCallbackUrl(String returnUrl, String token) {
+        try {
+            URL url = new URL(returnUrl);
+            
+            // Extract components
+            String protocol = url.getProtocol();
+            String host = url.getHost();
+            int port = url.getPort();
+            String path = url.getPath();
+            
+            // Build base URL with port if needed
+            StringBuilder baseUrl = new StringBuilder();
+            baseUrl. append(protocol).append("://"). append(host);
+            if (port != -1 && port != 80 && port != 443) {
+                baseUrl.append(":").append(port);
+            }
+            
+            // Extract context path from the path
+            // E.g., /myapp/index.html -> /myapp
+            //       /index.html -> ""
+            String contextPath = "";
+            if (path != null && !path.isEmpty()) {
+                int secondSlash = path.indexOf('/', 1);
+                if (secondSlash > 0) {
+                    // Path has at least two segments: /myapp/index.html
+                    contextPath = path.substring(0, secondSlash);
+                } else if (path.length() > 1 && !path.contains(".")) {
+                    // Path is just /myapp without trailing file
+                    contextPath = path;
+                }
+            }
+            
+            // Build callback URL
+            String callbackUrl = baseUrl.toString() + contextPath + "/auth/callback?token=" + token;
+            
+            logger.debug("Built callback URL:");
+            logger.debug("  Return URL: {}", returnUrl);
+            logger.debug("  Base URL: {}", baseUrl);
+            logger.debug("  Context Path: {}", contextPath.isEmpty() ? "(root)" : contextPath);
+            logger.debug("  Callback URL: {}", callbackUrl);
+            
+            return callbackUrl;
+            
+        } catch (MalformedURLException e) {
+            logger.error("Failed to parse returnUrl: {}", returnUrl, e);
+            // Fallback: just append token to returnUrl
+            return returnUrl + (returnUrl.contains("? ") ? "&" : "?") + "token=" + token;
+        }
+    }
+
+    /**
      * Validates that the redirect URL's domain is in the allowed list.
-     * 
-     * <p>This method prevents open redirect vulnerabilities by ensuring the
-     * returnUrl parameter points to a trusted domain.  Supports both exact
-     * domain matching and subdomain matching.</p>
-     * 
-     * @param urlString the URL to validate
-     * @return true if the domain is allowed, false otherwise
      */
     private boolean isAllowedDomain(String urlString) {
         try {
@@ -195,19 +206,5 @@ public class CustomAuthenticationSuccessHandler implements AuthenticationSuccess
             logger.warn("Malformed URL: {}", urlString, e);
             return false;
         }
-    }
-
-    /**
-     * Extracts the base URL (protocol, host, port) from a full URL.
-     * 
-     * @param urlString the full URL
-     * @return the base URL (e.g., "https://example.com:8080")
-     * @throws MalformedURLException if URL is invalid
-     */
-    private String extractBaseUrl(String urlString) throws MalformedURLException {
-        URL url = new URL(urlString);
-        int port = url.getPort();
-        String portPart = (port != -1 && port != 80 && port != 443) ? ":" + port : "";
-        return url.getProtocol() + "://" + url.getHost() + portPart;
     }
 }
