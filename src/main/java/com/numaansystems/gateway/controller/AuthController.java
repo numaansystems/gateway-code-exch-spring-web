@@ -76,53 +76,54 @@ public class AuthController {
      * @param authentication current authentication (may be null)
      * @throws IOException if redirect fails
      */
-    @GetMapping("/initiate")
-    public void initiateAuth(@RequestParam String returnUrl,
-                            @RequestParam(required = false, defaultValue = "false") boolean forceReauth,
-                            HttpServletRequest request,
-                            HttpServletResponse response,
-                            HttpSession session,
-                            Authentication authentication) throws IOException {
+@GetMapping("/initiate")
+public void initiateAuth(@RequestParam String returnUrl,
+                        @RequestParam(required = false, defaultValue = "true") boolean forceReauth,  // Changed default to TRUE
+                        HttpServletRequest request,
+                        HttpServletResponse response,
+                        HttpSession session,
+                        Authentication authentication) throws IOException {
+    
+    logger.info("Authentication initiated with returnUrl: {}, forceReauth: {}", returnUrl, forceReauth);
+    
+    // Check if user is already authenticated
+    boolean isAuthenticated = authentication != null 
+        && authentication.isAuthenticated() 
+        && !"anonymousUser".equals(authentication. getName());
+    
+    // ALWAYS force re-authentication for simplicity
+    if (isAuthenticated) {
+        logger.info("Forcing re-authentication for user: {}", authentication.getName());
         
-        logger.info("Authentication initiated with returnUrl: {}, forceReauth: {}", returnUrl, forceReauth);
-        
-        // Check if user is already authenticated
-        boolean isAuthenticated = authentication != null 
-            && authentication.isAuthenticated() 
-            && !"anonymousUser".equals(authentication.getName());
-        
-        // Force re-authentication if requested
-        if (isAuthenticated && forceReauth) {
-            logger.info("Forcing re-authentication for user: {}", authentication.getName());
-            
-            // Invalidate existing session
-            if (session != null) {
-                session.invalidate();
-            }
-            
-            // Clear security context
-            SecurityContextHolder.clearContext();
-            
-            // Create new session
-            session = request.getSession(true);
-            
-            // Treat as unauthenticated now
-            isAuthenticated = false;
+        // Invalidate existing session
+        if (session != null) {
+            session.invalidate();
         }
         
-        if (isAuthenticated) {
-            logger.info("User already authenticated: {}", authentication.getName());
-        } else {
-            logger.info("Initiating OAuth2 login flow");
-        }
+        // Clear security context
+        SecurityContextHolder.clearContext();
         
-        // Store returnUrl in session for use after OAuth2 callback
-        session.setAttribute("returnUrl", returnUrl);
+        // Create new session
+        session = request.getSession(true);
         
-        // Redirect to Azure AD OAuth2 authorization endpoint
-        response.sendRedirect("/oauth2/authorization/azure");
+        isAuthenticated = false;
     }
-
+    
+    logger.info("Initiating OAuth2 login flow");
+    
+    // Store returnUrl in session for use after OAuth2 callback
+    session.setAttribute("returnUrl", returnUrl);
+    
+    // Store forceReauth flag for authorization request customization
+    if (forceReauth) {
+        session.setAttribute("forceReauth", true);
+    }
+    
+    // Include context path in redirect
+    String redirectUrl = request.getContextPath() + "/oauth2/authorization/azure";
+    logger.info("Redirecting to: {}", redirectUrl);
+    response.sendRedirect(redirectUrl);
+}
     /**
      * Validates an exchange token and returns user information.
      * 
