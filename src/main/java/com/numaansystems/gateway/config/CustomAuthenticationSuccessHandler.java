@@ -41,85 +41,86 @@ public class CustomAuthenticationSuccessHandler implements AuthenticationSuccess
         this.exchangeTokenService = exchangeTokenService;
     }
 
-    @Override
-    public void onAuthenticationSuccess(HttpServletRequest request,
-                                       HttpServletResponse response,
-                                       Authentication authentication) throws IOException {
-        
-        HttpSession session = request.getSession(false);
-        String returnUrl = (String) (session != null ? session.getAttribute("returnUrl") : null);
+@Override
+public void onAuthenticationSuccess(HttpServletRequest request,
+                                   HttpServletResponse response,
+                                   Authentication authentication) throws IOException {
+    
+    HttpSession session = request.getSession(false);
+    String returnUrl = (String) (session != null ? session.getAttribute("returnUrl") : null);
+    String finalReturnUrl = (String) (session != null ? session.getAttribute("finalReturnUrl") : null);
 
-        logger.info("Authentication success handler invoked");
-        logger.info("ReturnUrl from session: {}", returnUrl);
+    logger.info("Authentication success handler invoked");
+    logger.info("Return URL (callback): {}", returnUrl);
+    logger.info("Final return URL (destination): {}", finalReturnUrl);
 
-        if (returnUrl != null && ! returnUrl.isEmpty()) {
-            // Validate domain to prevent open redirect attacks
-            if (!isAllowedDomain(returnUrl)) {
-                logger.warn("Unauthorized redirect domain attempted: {}", returnUrl);
-                response.sendRedirect("/");
-                return;
-            }
-
-            // Extract user information from OAuth2 authentication
-            OAuth2AuthenticationToken oauthToken = (OAuth2AuthenticationToken) authentication;
-            OAuth2User oauth2User = oauthToken.getPrincipal();
-            Map<String, Object> attributes = oauth2User.getAttributes();
-
-            // Get username (prefer preferred_username, fallback to email)
-            String username = (String) attributes.getOrDefault("preferred_username", attributes.get("email"));
-            String email = (String) attributes.get("email");
-            String name = (String) attributes.get("name");
-
-            logger.info("Processing authentication success for user: {}", username);
-
-            // Merge authorities from multiple sources
-            Set<String> authorities = new HashSet<>();
-
-            // 1. Extract roles from Azure AD token claims
-            Object rolesObj = attributes.get("roles");
-            if (rolesObj instanceof List) {
-                @SuppressWarnings("unchecked")
-                List<String> roles = (List<String>) rolesObj;
-                authorities.addAll(roles);
-                logger.debug("Added {} Azure AD roles for user {}", roles.size(), username);
-            }
-
-            // 2.  Add OAuth2 granted authorities (scopes)
-            for (GrantedAuthority authority : oauth2User.getAuthorities()) {
-                authorities.add(authority.getAuthority());
-            }
-            logger.debug("Added OAuth2 authorities for user {}", username);
-
-            // 3. Load additional authorities from database (if service is available)
-            if (userAuthorityService != null) {
-                try {
-                    Collection<String> dbAuthorities = userAuthorityService.loadAuthoritiesByUsername(username);
-                    authorities.addAll(dbAuthorities);
-                    logger.info("Added {} database authorities for user {}", dbAuthorities.size(), username);
-                } catch (Exception e) {
-                    logger.warn("Failed to load database authorities for user {}: {}", username, e.getMessage());
-                }
-            }
-
-            // Create exchange token with user information
-            String token = exchangeTokenService.createToken(username, email, name, authorities);
-            logger.info("Created exchange token for user {} with {} authorities", username, authorities.size());
-
-            // Build callback URL with context path preserved
-            String callbackUrl = buildCallbackUrl(returnUrl, token);
-
-            // Clean up session
-            if (session != null) {
-                session.removeAttribute("returnUrl");
-            }
-
-            logger.info("Redirecting user {} to callback URL: {}", username, callbackUrl);
-            response. sendRedirect(callbackUrl);
-        } else {
-            logger.warn("No returnUrl found in session, redirecting to root");
+    if (returnUrl != null && !returnUrl.isEmpty()) {
+        if (! isAllowedDomain(returnUrl)) {
+            logger.warn("Unauthorized redirect domain attempted: {}", returnUrl);
             response.sendRedirect("/");
+            return;
         }
+
+        // Extract user information
+        OAuth2AuthenticationToken oauthToken = (OAuth2AuthenticationToken) authentication;
+        OAuth2User oauth2User = oauthToken.getPrincipal();
+        Map<String, Object> attributes = oauth2User.getAttributes();
+
+        String username = (String) attributes.getOrDefault("preferred_username", attributes.get("email"));
+        String email = (String) attributes.get("email");
+        String name = (String) attributes.get("name");
+
+        logger.info("Processing authentication success for user: {}", username);
+
+        // Merge authorities
+        Set<String> authorities = new HashSet<>();
+
+        Object rolesObj = attributes.get("roles");
+        if (rolesObj instanceof List) {
+            @SuppressWarnings("unchecked")
+            List<String> roles = (List<String>) rolesObj;
+            authorities.addAll(roles);
+        }
+
+        for (GrantedAuthority authority : oauth2User.getAuthorities()) {
+            authorities.add(authority. getAuthority());
+        }
+
+        if (userAuthorityService != null) {
+            try {
+                Collection<String> dbAuthorities = userAuthorityService.loadAuthoritiesByUsername(username);
+                authorities.addAll(dbAuthorities);
+            } catch (Exception e) {
+                logger.warn("Failed to load database authorities: {}", e.getMessage());
+            }
+        }
+
+        // Create exchange token
+        String token = exchangeTokenService.createToken(username, email, name, authorities);
+        logger.info("Created exchange token for user {}", username);
+
+        // Build callback URL with token AND finalReturnUrl
+        String separator = returnUrl.contains("?") ? "&" : "?";
+        String callbackUrl = returnUrl + separator + "token=" + token;
+        
+        // Add finalReturnUrl if present
+        if (finalReturnUrl != null && !finalReturnUrl.isEmpty()) {
+            callbackUrl += "&returnUrl=" + java.net.URLEncoder.encode(finalReturnUrl, "UTF-8");
+        }
+
+        // Clean up session
+        if (session != null) {
+            session.removeAttribute("returnUrl");
+            session.removeAttribute("finalReturnUrl");
+        }
+
+        logger.info("Redirecting to: {}", callbackUrl);
+        response.sendRedirect(callbackUrl);
+    } else {
+        logger.warn("No returnUrl found in session");
+        response.sendRedirect("/");
     }
+}
 
     /**
      * Build callback URL from returnUrl by extracting protocol, host, port, and context path. 
