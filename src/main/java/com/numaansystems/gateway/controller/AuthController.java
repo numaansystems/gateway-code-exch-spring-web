@@ -2,12 +2,13 @@ package com.numaansystems.gateway.controller;
 
 import com.numaansystems.gateway.service.ExchangeTokenService;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet. http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import org.slf4j.Logger;
-import org.slf4j. LoggerFactory;
-import org. springframework.http.ResponseEntity;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.ResponseEntity;
 import org. springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
@@ -29,7 +30,7 @@ import java.util.Map;
  * </ul>
  * 
  * @author Numaan Systems
- * @version 0. 1.0
+ * @version 0.1. 0
  */
 @RestController
 @RequestMapping("/auth")
@@ -51,17 +52,24 @@ public class AuthController {
     /**
      * Initiates the OAuth2 authentication flow with Azure AD.
      * 
-     * <p>This endpoint is called by the legacy application to start authentication.
+     * <p>This endpoint is called by the legacy application to start authentication. 
      * The returnUrl is stored in the session and the user is redirected to Azure AD
      * for authentication.</p>
      * 
      * <h3>Usage Example</h3>
      * <pre>
-     * window.location.href = 'http://gateway.example.com/gateway/auth/initiate? returnUrl=' 
+     * // Normal login (reuse existing session if available)
+     * window.location. href = 'http://gateway.example.com/gateway/auth/initiate?returnUrl=' 
      *                       + encodeURIComponent('http://app.example.com/dashboard');
+     * 
+     * // Force re-authentication (always prompt for credentials)
+     * window. location.href = 'http://gateway.example.com/gateway/auth/initiate? returnUrl=' 
+     *                       + encodeURIComponent('http://app.example.com/dashboard')
+     *                       + '&forceReauth=true';
      * </pre>
      * 
      * @param returnUrl the URL to return to after successful authentication (required)
+     * @param forceReauth if true, forces re-authentication even if user is already logged in (optional, default: false)
      * @param request the HTTP request
      * @param response the HTTP response
      * @param session the HTTP session
@@ -70,26 +78,46 @@ public class AuthController {
      */
     @GetMapping("/initiate")
     public void initiateAuth(@RequestParam String returnUrl,
+                            @RequestParam(required = false, defaultValue = "false") boolean forceReauth,
                             HttpServletRequest request,
                             HttpServletResponse response,
                             HttpSession session,
                             Authentication authentication) throws IOException {
         
-        logger.info("Authentication initiated with returnUrl: {}", returnUrl);
-        
-        // Store returnUrl in session for use after OAuth2 callback
-        session.setAttribute("returnUrl", returnUrl);
+        logger.info("Authentication initiated with returnUrl: {}, forceReauth: {}", returnUrl, forceReauth);
         
         // Check if user is already authenticated
         boolean isAuthenticated = authentication != null 
             && authentication.isAuthenticated() 
             && !"anonymousUser".equals(authentication.getName());
         
+        // Force re-authentication if requested
+        if (isAuthenticated && forceReauth) {
+            logger.info("Forcing re-authentication for user: {}", authentication.getName());
+            
+            // Invalidate existing session
+            if (session != null) {
+                session.invalidate();
+            }
+            
+            // Clear security context
+            SecurityContextHolder.clearContext();
+            
+            // Create new session
+            session = request.getSession(true);
+            
+            // Treat as unauthenticated now
+            isAuthenticated = false;
+        }
+        
         if (isAuthenticated) {
-            logger. info("User already authenticated: {}", authentication.getName());
+            logger.info("User already authenticated: {}", authentication.getName());
         } else {
             logger.info("Initiating OAuth2 login flow");
         }
+        
+        // Store returnUrl in session for use after OAuth2 callback
+        session.setAttribute("returnUrl", returnUrl);
         
         // Redirect to Azure AD OAuth2 authorization endpoint
         response.sendRedirect("/oauth2/authorization/azure");
@@ -99,7 +127,7 @@ public class AuthController {
      * Validates an exchange token and returns user information.
      * 
      * <p>This endpoint should be called by the legacy application's backend
-     * (server-to-server) to validate the exchange token and retrieve user details. 
+     * (server-to-server) to validate the exchange token and retrieve user details.  
      * The token is single-use and will be removed after validation.</p>
      * 
      * <h3>Success Response (200 OK)</h3>
@@ -107,7 +135,7 @@ public class AuthController {
      * {
      *   "success": true,
      *   "username": "user@example.com",
-     *   "email": "user@example.com",
+     *   "email": "user@example. com",
      *   "name": "John Doe",
      *   "authorities": ["ROLE_USER", "ROLE_ADMIN"]
      * }
@@ -132,7 +160,7 @@ public class AuthController {
         logger.info("Token validation requested from: {}", request.getRemoteAddr());
         
         // Validate and remove token (single-use)
-        ExchangeTokenService.ExchangeTokenData tokenData = exchangeTokenService. validateAndRemoveToken(token);
+        ExchangeTokenService.ExchangeTokenData tokenData = exchangeTokenService.validateAndRemoveToken(token);
         
         if (tokenData == null) {
             logger.warn("Token validation failed: invalid or expired token");
@@ -163,8 +191,8 @@ public class AuthController {
      * 
      * <h3>Usage Example</h3>
      * <pre>
-     * window. location.href = 'http://gateway.example.com/gateway/auth/logout?returnUrl=' 
-     *                       + encodeURIComponent('http://app. example.com/');
+     * window.location.href = 'http://gateway.example.com/gateway/auth/logout?returnUrl=' 
+     *                       + encodeURIComponent('http://app.example.com/');
      * </pre>
      * 
      * @param returnUrl the URL to redirect to after logout (optional)
@@ -181,9 +209,13 @@ public class AuthController {
         
         // Invalidate session
         if (session != null) {
-            session.invalidate();
+            session. invalidate();
             logger.info("Session invalidated");
         }
+        
+        // Clear security context
+        SecurityContextHolder.clearContext();
+        logger.info("Security context cleared");
         
         // Redirect to returnUrl or root
         String redirectUrl = (returnUrl != null && !returnUrl.isEmpty()) ?  returnUrl : "/";
