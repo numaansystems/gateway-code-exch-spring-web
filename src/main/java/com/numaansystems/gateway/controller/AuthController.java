@@ -76,53 +76,82 @@ public class AuthController {
      * @param authentication current authentication (may be null)
      * @throws IOException if redirect fails
      */
-@GetMapping("/initiate")
+
+    @GetMapping("/initiate")
 public void initiateAuth(@RequestParam String returnUrl,
-                        @RequestParam(required = false, defaultValue = "true") boolean forceReauth,  // Changed default to TRUE
+                        @RequestParam(required = false, defaultValue = "true") boolean forceReauth,
                         HttpServletRequest request,
                         HttpServletResponse response,
                         HttpSession session,
                         Authentication authentication) throws IOException {
     
-    logger.info("Authentication initiated with returnUrl: {}, forceReauth: {}", returnUrl, forceReauth);
+    logger.info("Authentication initiated with returnUrl: {}", returnUrl);
     
-    // Check if user is already authenticated
+    // Always force re-authentication
     boolean isAuthenticated = authentication != null 
         && authentication.isAuthenticated() 
-        && !"anonymousUser".equals(authentication. getName());
+        && !"anonymousUser".equals(authentication.getName());
     
-    // ALWAYS force re-authentication for simplicity
     if (isAuthenticated) {
-        logger.info("Forcing re-authentication for user: {}", authentication.getName());
-        
-        // Invalidate existing session
+        logger. info("Forcing re-authentication for user: {}", authentication.getName());
         if (session != null) {
             session.invalidate();
         }
-        
-        // Clear security context
         SecurityContextHolder.clearContext();
-        
-        // Create new session
         session = request.getSession(true);
-        
-        isAuthenticated = false;
+    } else {
+        if (session == null) {
+            session = request.getSession(true);
+        }
     }
     
-    logger.info("Initiating OAuth2 login flow");
+    // Store ORIGINAL returnUrl (where user wanted to go)
+    session.setAttribute("finalReturnUrl", returnUrl);
     
-    // Store returnUrl in session for use after OAuth2 callback
-    session.setAttribute("returnUrl", returnUrl);
+    // Build callback URL for the legacy app
+    String callbackUrl = buildCallbackUrl(returnUrl);
+    session.setAttribute("returnUrl", callbackUrl);
     
-    // Store forceReauth flag for authorization request customization
     if (forceReauth) {
         session.setAttribute("forceReauth", true);
     }
     
-    // Include context path in redirect
+    logger.info("Final return URL: {}", returnUrl);
+    logger.info("Callback URL: {}", callbackUrl);
+    
     String redirectUrl = request.getContextPath() + "/oauth2/authorization/azure";
-    logger.info("Redirecting to: {}", redirectUrl);
     response.sendRedirect(redirectUrl);
+}
+
+/**
+ * Extract callback URL from returnUrl
+ * E.g., http://localhost:8080/myapp/index.html -> http://localhost:8080/myapp/auth/callback
+ */
+private String buildCallbackUrl(String returnUrl) throws java.net.MalformedURLException {
+    java.net.URL url = new java.net.URL(returnUrl);
+    
+    String protocol = url.getProtocol();
+    String host = url.getHost();
+    int port = url.getPort();
+    String path = url.getPath();
+    
+    StringBuilder baseUrl = new StringBuilder();
+    baseUrl.append(protocol).append("://").append(host);
+    if (port != -1 && port != 80 && port != 443) {
+        baseUrl. append(":").append(port);
+    }
+    
+    String contextPath = "";
+    if (path != null && !path.isEmpty()) {
+        int secondSlash = path.indexOf('/', 1);
+        if (secondSlash > 0) {
+            contextPath = path.substring(0, secondSlash);
+        } else if (path.length() > 1 && !path.contains(". ")) {
+            contextPath = path;
+        }
+    }
+    
+    return baseUrl.toString() + contextPath + "/auth/callback";
 }
     /**
      * Validates an exchange token and returns user information.
