@@ -1,50 +1,68 @@
-package com.example.legacyapp.filter;
+package com.example.legacyapp. filter;
 
 import javax.servlet.*;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http. HttpServletResponse;
+import javax.servlet.http. HttpServletRequest;
+import javax. servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 
-/**
- * Servlet Filter to check authentication status for protected resources. 
- * 
- * If user is not authenticated, redirects to gateway for OAuth2 login.
- */
 public class GatewayAuthenticationFilter implements Filter {
 
     private String gatewayUrl;
     private List excludedPaths;
+    private List excludedExtensions;
+    private static final int MAX_AUTH_ATTEMPTS = 3;
+    private static final String AUTH_ATTEMPT_COUNT = "authAttemptCount";
+    private static final String LAST_AUTH_ATTEMPT_TIME = "lastAuthAttemptTime";
+    private static final long AUTH_ATTEMPT_WINDOW_MS = 30000; // 30 seconds
 
     public void init(FilterConfig filterConfig) throws ServletException {
-        // Read gateway URL from web.xml init-param
         gatewayUrl = filterConfig.getInitParameter("gatewayUrl");
         if (gatewayUrl == null || gatewayUrl.isEmpty()) {
             gatewayUrl = "http://localhost:9090/gateway";
         }
 
-        // Read excluded paths (comma-separated)
         String excludedPathsParam = filterConfig.getInitParameter("excludedPaths");
-        if (excludedPathsParam != null && !excludedPathsParam. isEmpty()) {
+        if (excludedPathsParam != null && !excludedPathsParam.isEmpty()) {
             excludedPaths = Arrays.asList(excludedPathsParam.split(","));
         } else {
             excludedPaths = Arrays.asList(
                 "/auth/callback",
                 "/auth/logout",
                 "/login.html",
+                "/error.html",
                 "/public",
                 "/resources",
                 "/static",
-                "/gwt"
+                "/gwt",
+                "/css",
+                "/js",
+                "/images",
+                "/fonts",
+                "/assets"
+            );
+        }
+
+        // ADDED: File extensions to exclude from authentication
+        String excludedExtensionsParam = filterConfig.getInitParameter("excludedExtensions");
+        if (excludedExtensionsParam != null && !excludedExtensionsParam.isEmpty()) {
+            excludedExtensions = Arrays. asList(excludedExtensionsParam.split(","));
+        } else {
+            excludedExtensions = Arrays.asList(
+                ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".ico", 
+                ".svg", ".woff", ".woff2", ". ttf", ".eot", ".map",
+                ".html", ".htm"  // Add if you want to exclude all HTML files
             );
         }
 
         System.out.println("==========================================");
         System.out.println("GatewayAuthenticationFilter INITIALIZED");
-        System.out. println("Gateway URL: " + gatewayUrl);
+        System.out.println("Gateway URL: " + gatewayUrl);
         System.out.println("Excluded Paths: " + excludedPaths);
+        System.out.println("Excluded Extensions: " + excludedExtensions);
+        System.out.println("Max Auth Attempts: " + MAX_AUTH_ATTEMPTS);
         System.out.println("==========================================");
     }
 
@@ -57,43 +75,115 @@ public class GatewayAuthenticationFilter implements Filter {
 
         String requestURI = httpRequest.getRequestURI();
         String contextPath = httpRequest.getContextPath();
-        String path = requestURI.substring(contextPath. length());
+        String path = requestURI.substring(contextPath.length());
 
-        // Debug logging
-        System.out.println("Filter processing: " + path);
+        // ADDED: Quick check for static resources by extension
+        if (isStaticResource(path)) {
+            // Allow static resources without authentication check
+            chain.doFilter(request, response);
+            return;
+        }
+
+        System.out.println("==========================================");
+        System.out. println("FILTER - Processing path: " + path);
+        System.out.println("FILTER - Full URI: " + requestURI);
+        System.out.println("FILTER - Session exists: " + (session != null));
+        
+        if (session != null) {
+            System.out.println("FILTER - Session ID: " + session.getId());
+            System.out.println("FILTER - Authenticated: " + session.getAttribute("authenticated"));
+            System.out.println("FILTER - Username: " + session.getAttribute("username"));
+        }
 
         // Check if path is excluded from authentication
         if (isExcludedPath(path)) {
-            System.out.println("Path excluded from authentication: " + path);
+            System.out.println("FILTER - Path excluded from authentication: " + path);
+            System. out.println("==========================================");
             chain.doFilter(request, response);
             return;
         }
 
         // Check if user is authenticated
         Boolean authenticated = (session != null) 
-            ?  (Boolean) session.getAttribute("authenticated") 
+            ? (Boolean) session.getAttribute("authenticated") 
             : null;
 
         if (authenticated == null || !authenticated. booleanValue()) {
-            // User not authenticated - redirect to gateway
-            String fullRequestUrl = getFullRequestUrl(httpRequest);
-            String returnUrl = fullRequestUrl;
+            // User not authenticated
+            
+            // CHECK FOR AUTHENTICATION LOOP
+            if (session != null && isAuthenticationLoop(session)) {
+                System.err.println("FILTER - AUTHENTICATION LOOP DETECTED!");
+                System.err.println("FILTER - Redirecting to error page");
+                System.out.println("==========================================");
+                
+                session.invalidate();
+                httpResponse.sendRedirect(contextPath + "/error.html? error=auth_loop");
+                return;
+            }
+            
+            // Track authentication attempt
+            if (session != null) {
+                incrementAuthAttempt(session);
+            }
+            
+            // Build callback URL with context path
+            String scheme = httpRequest.getScheme();
+            String serverName = httpRequest.getServerName();
+            int serverPort = httpRequest.getServerPort();
+            
+            String portPart = "";
+            if ((scheme.equals("http") && serverPort != 80) || 
+                (scheme.equals("https") && serverPort != 443)) {
+                portPart = ":" + serverPort;
+            }
+            
+            String callbackUrl = scheme + "://" + serverName + portPart + contextPath + "/auth/callback";
+            String redirectUrl = gatewayUrl + "/auth/initiate?returnUrl=" 
+                + encodeURIComponent(callbackUrl);
 
-            String redirectUrl = gatewayUrl + "/auth/initiate? returnUrl=" 
-                + encodeURIComponent(returnUrl);
-
-            System.out.println("User not authenticated. Redirecting to: " + redirectUrl);
+            System.out.println("FILTER - User NOT authenticated - redirecting");
+            System.out.println("FILTER - Callback URL: " + callbackUrl);
+            System.out.println("FILTER - Redirect URL: " + redirectUrl);
+            System.out.println("==========================================");
+            
             httpResponse.sendRedirect(redirectUrl);
             return;
         }
 
-        // User is authenticated - log and continue
-        System.out.println("User authenticated: " + session.getAttribute("username"));
+        // User is authenticated - reset attempt counter
+        if (session != null) {
+            session.removeAttribute(AUTH_ATTEMPT_COUNT);
+            session.removeAttribute(LAST_AUTH_ATTEMPT_TIME);
+        }
+
+        System.out.println("FILTER - User IS authenticated: " + session.getAttribute("username"));
+        System.out.println("FILTER - Allowing request to proceed");
+        System.out. println("==========================================");
         chain.doFilter(request, response);
     }
 
     public void destroy() {
-        System.out.println("GatewayAuthenticationFilter destroyed");
+        System. out.println("GatewayAuthenticationFilter destroyed");
+    }
+
+    /**
+     * ADDED: Check if the request is for a static resource (CSS, JS, images, etc.)
+     */
+    private boolean isStaticResource(String path) {
+        if (path == null || path.isEmpty()) {
+            return false;
+        }
+        
+        // Check file extension
+        for (int i = 0; i < excludedExtensions.size(); i++) {
+            String extension = ((String) excludedExtensions.get(i)).trim(). toLowerCase();
+            if (path. toLowerCase().endsWith(extension)) {
+                return true;
+            }
+        }
+        
+        return false;
     }
 
     /**
@@ -110,17 +200,54 @@ public class GatewayAuthenticationFilter implements Filter {
     }
 
     /**
-     * Get the full request URL including query parameters
+     * Check if we're in an authentication loop
      */
-    private String getFullRequestUrl(HttpServletRequest request) {
-        StringBuffer requestURL = request.getRequestURL();
-        String queryString = request.getQueryString();
-
-        if (queryString == null) {
-            return requestURL.toString();
-        } else {
-            return requestURL. append('?').append(queryString).toString();
+    private boolean isAuthenticationLoop(HttpSession session) {
+        Long lastAttemptTime = (Long) session.getAttribute(LAST_AUTH_ATTEMPT_TIME);
+        Integer attemptCount = (Integer) session. getAttribute(AUTH_ATTEMPT_COUNT);
+        
+        if (lastAttemptTime == null || attemptCount == null) {
+            return false;
         }
+        
+        long currentTime = System.currentTimeMillis();
+        long timeSinceLastAttempt = currentTime - lastAttemptTime. longValue();
+        
+        if (attemptCount. intValue() >= MAX_AUTH_ATTEMPTS && 
+            timeSinceLastAttempt < AUTH_ATTEMPT_WINDOW_MS) {
+            System.err.println("FILTER - Loop detection:");
+            System.err.println("  Attempts: " + attemptCount);
+            System.err.println("  Time since first attempt: " + timeSinceLastAttempt + "ms");
+            return true;
+        }
+        
+        if (timeSinceLastAttempt > AUTH_ATTEMPT_WINDOW_MS) {
+            session.removeAttribute(AUTH_ATTEMPT_COUNT);
+            session.removeAttribute(LAST_AUTH_ATTEMPT_TIME);
+            return false;
+        }
+        
+        return false;
+    }
+
+    /**
+     * Increment authentication attempt counter
+     */
+    private void incrementAuthAttempt(HttpSession session) {
+        Integer attemptCount = (Integer) session.getAttribute(AUTH_ATTEMPT_COUNT);
+        Long lastAttemptTime = (Long) session.getAttribute(LAST_AUTH_ATTEMPT_TIME);
+        long currentTime = System.currentTimeMillis();
+        
+        if (attemptCount == null) {
+            attemptCount = Integer.valueOf(1);
+        } else {
+            attemptCount = Integer.valueOf(attemptCount.intValue() + 1);
+        }
+        
+        session.setAttribute(AUTH_ATTEMPT_COUNT, attemptCount);
+        session. setAttribute(LAST_AUTH_ATTEMPT_TIME, Long.valueOf(currentTime));
+        
+        System.out.println("FILTER - Auth attempt #" + attemptCount + " tracked");
     }
 
     /**
@@ -128,11 +255,11 @@ public class GatewayAuthenticationFilter implements Filter {
      */
     private String encodeURIComponent(String s) {
         try {
-            return java.net.URLEncoder. encode(s, "UTF-8")
+            return java.net.URLEncoder.encode(s, "UTF-8")
                 .replaceAll("\\+", "%20")
-                .replaceAll("\\%21", "!")
+                . replaceAll("\\%21", "!")
                 .replaceAll("\\%27", "'")
-                . replaceAll("\\%28", "(")
+                .replaceAll("\\%28", "(")
                 .replaceAll("\\%29", ")")
                 .replaceAll("\\%7E", "~");
         } catch (java.io.UnsupportedEncodingException e) {
