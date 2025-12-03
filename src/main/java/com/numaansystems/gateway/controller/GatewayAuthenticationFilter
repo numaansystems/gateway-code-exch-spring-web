@@ -1,50 +1,79 @@
 package com.example.legacyapp.filter;
 
+import org.apache.commons.httpclient.HttpClient;
+import org.apache.commons.httpclient.HttpStatus;
+import org.apache.commons.httpclient.methods.PostMethod;
+
 import javax.servlet.*;
 import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http. HttpServletResponse;
+import javax.servlet. http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
+import java.io. BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
 /**
- * Servlet Filter to check authentication status for protected resources. 
- * 
- * If user is not authenticated, redirects to gateway for OAuth2 login.
+ * All-in-one authentication filter that handles:
+ * 1. Session checking
+ * 2. OAuth2 callback handling (code exchange)
+ * 3. Token validation
+ * 4. Session creation
+ * 5. Loop detection
  */
 public class GatewayAuthenticationFilter implements Filter {
 
     private String gatewayUrl;
     private List excludedPaths;
+    private List excludedExtensions;
+    private static final int MAX_AUTH_ATTEMPTS = 3;
+    private static final String AUTH_ATTEMPT_COUNT = "authAttemptCount";
+    private static final String LAST_AUTH_ATTEMPT_TIME = "lastAuthAttemptTime";
+    private static final long AUTH_ATTEMPT_WINDOW_MS = 30000; // 30 seconds
 
     public void init(FilterConfig filterConfig) throws ServletException {
-        // Read gateway URL from web.xml init-param
         gatewayUrl = filterConfig.getInitParameter("gatewayUrl");
         if (gatewayUrl == null || gatewayUrl.isEmpty()) {
             gatewayUrl = "http://localhost:9090/gateway";
         }
 
-        // Read excluded paths (comma-separated)
         String excludedPathsParam = filterConfig.getInitParameter("excludedPaths");
-        if (excludedPathsParam != null && !excludedPathsParam. isEmpty()) {
+        if (excludedPathsParam != null && !excludedPathsParam.isEmpty()) {
             excludedPaths = Arrays.asList(excludedPathsParam.split(","));
         } else {
             excludedPaths = Arrays.asList(
-                "/auth/callback",
                 "/auth/logout",
-                "/login.html",
+                "/login. html",
+                "/error.html",
                 "/public",
                 "/resources",
                 "/static",
-                "/gwt"
+                "/gwt",
+                "/css",
+                "/js",
+                "/images",
+                "/fonts",
+                "/assets"
+            );
+        }
+
+        String excludedExtensionsParam = filterConfig.getInitParameter("excludedExtensions");
+        if (excludedExtensionsParam != null && !excludedExtensionsParam. isEmpty()) {
+            excludedExtensions = Arrays.asList(excludedExtensionsParam.split(","));
+        } else {
+            excludedExtensions = Arrays.asList(
+                ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ". ico",
+                ".svg", ".woff", ".woff2", ".ttf", ".eot", ".map"
             );
         }
 
         System.out.println("==========================================");
-        System.out.println("GatewayAuthenticationFilter INITIALIZED");
+        System.out. println("GatewayAuthenticationFilter INITIALIZED (ALL-IN-ONE MODE)");
         System.out. println("Gateway URL: " + gatewayUrl);
         System.out.println("Excluded Paths: " + excludedPaths);
+        System.out.println("Excluded Extensions: " + excludedExtensions);
         System.out.println("==========================================");
     }
 
@@ -53,52 +82,299 @@ public class GatewayAuthenticationFilter implements Filter {
 
         HttpServletRequest httpRequest = (HttpServletRequest) request;
         HttpServletResponse httpResponse = (HttpServletResponse) response;
-        HttpSession session = httpRequest. getSession(false);
-
         String requestURI = httpRequest.getRequestURI();
         String contextPath = httpRequest.getContextPath();
-        String path = requestURI.substring(contextPath. length());
+        String path = requestURI.substring(contextPath.length());
 
-        // Debug logging
-        System.out.println("Filter processing: " + path);
-
-        // Check if path is excluded from authentication
-        if (isExcludedPath(path)) {
-            System.out.println("Path excluded from authentication: " + path);
+        // FAST PATH: Static resources - no authentication needed
+        if (isStaticResource(path)) {
             chain.doFilter(request, response);
             return;
         }
 
-        // Check if user is authenticated
+        // FAST PATH: Excluded paths - no authentication needed
+        if (isExcludedPath(path)) {
+            chain. doFilter(request, response);
+            return;
+        }
+
+        // Check for OAuth2 callback (token parameter from gateway)
+        String token = httpRequest.getParameter("token");
+        String returnUrl = httpRequest.getParameter("returnUrl");
+
+        if (token != null && ! token.isEmpty()) {
+            // THIS IS THE CALLBACK FROM GATEWAY - Handle token validation
+            System.out.println("==========================================");
+            System.out. println("FILTER - OAuth2 callback detected");
+            System.out.println("FILTER - Token: " + token. substring(0, Math.min(10, token.length())) + "...");
+            System.out.println("FILTER - Return URL: " + returnUrl);
+            
+            handleOAuth2Callback(httpRequest, httpResponse, token, returnUrl, contextPath);
+            return; // Don't continue chain - we're redirecting
+        }
+
+        // Check if user is already authenticated
+        HttpSession session = httpRequest.getSession(false);
         Boolean authenticated = (session != null) 
             ?  (Boolean) session.getAttribute("authenticated") 
             : null;
 
-        if (authenticated == null || !authenticated. booleanValue()) {
-            // User not authenticated - redirect to gateway
-            String fullRequestUrl = getFullRequestUrl(httpRequest);
-            String returnUrl = fullRequestUrl;
-
-            String redirectUrl = gatewayUrl + "/auth/initiate? returnUrl=" 
-                + encodeURIComponent(returnUrl);
-
-            System.out.println("User not authenticated. Redirecting to: " + redirectUrl);
-            httpResponse.sendRedirect(redirectUrl);
+        if (Boolean.TRUE.equals(authenticated)) {
+            // FAST PATH: User is authenticated - allow request
+            chain.doFilter(request, response);
             return;
         }
 
-        // User is authenticated - log and continue
-        System.out.println("User authenticated: " + session.getAttribute("username"));
-        chain.doFilter(request, response);
-    }
+        // User NOT authenticated - need to redirect to gateway
+        System.out.println("==========================================");
+        System.out.println("FILTER - User NOT authenticated");
+        System.out.println("FILTER - Path: " + path);
+        System.out.println("FILTER - Session exists: " + (session != null));
 
-    public void destroy() {
-        System.out.println("GatewayAuthenticationFilter destroyed");
+        // CHECK FOR AUTHENTICATION LOOP
+        if (session != null && isAuthenticationLoop(session)) {
+            System.err.println("FILTER - AUTHENTICATION LOOP DETECTED!");
+            System.err.println("FILTER - Redirecting to error page");
+            System.out.println("==========================================");
+            
+            session.invalidate();
+            httpResponse.sendRedirect(contextPath + "/error.html? error=auth_loop");
+            return;
+        }
+
+        // Track authentication attempt
+        if (session == null) {
+            session = httpRequest.getSession(true);
+        }
+        incrementAuthAttempt(session);
+
+        // Build callback URL (this filter will handle the callback)
+        String scheme = httpRequest.getScheme();
+        String serverName = httpRequest.getServerName();
+        int serverPort = httpRequest.getServerPort();
+        
+        String portPart = "";
+        if ((scheme.equals("http") && serverPort != 80) || 
+            (scheme.equals("https") && serverPort != 443)) {
+            portPart = ":" + serverPort;
+        }
+        
+        // Store the originally requested URL in session
+        String originalUrl = scheme + "://" + serverName + portPart + requestURI;
+        if (httpRequest.getQueryString() != null) {
+            originalUrl += "?" + httpRequest.getQueryString();
+        }
+        session.setAttribute("originalRequestUrl", originalUrl);
+        
+        // Callback URL points back to this filter
+        String callbackUrl = scheme + "://" + serverName + portPart + contextPath + path;
+        String redirectUrl = gatewayUrl + "/auth/initiate? returnUrl=" 
+            + encodeURIComponent(callbackUrl);
+
+        System.out.println("FILTER - Original URL: " + originalUrl);
+        System.out.println("FILTER - Callback URL: " + callbackUrl);
+        System.out.println("FILTER - Redirecting to gateway: " + redirectUrl);
+        System.out.println("==========================================");
+        
+        httpResponse.sendRedirect(redirectUrl);
     }
 
     /**
-     * Check if the path is excluded from authentication
+     * Handle OAuth2 callback with token from gateway
      */
+    private void handleOAuth2Callback(HttpServletRequest request, HttpServletResponse response, 
+                                     String token, String returnUrl, String contextPath) 
+            throws IOException {
+        
+        System.out.println("CALLBACK - Validating token with gateway.. .");
+        
+        // Validate token with gateway
+        TokenValidationResult result = validateToken(token);
+        
+        if (! result.success) {
+            System.err.println("CALLBACK - Token validation FAILED: " + result.error);
+            System.out.println("==========================================");
+            response.sendRedirect(contextPath + "/error. html?error=token_validation_failed");
+            return;
+        }
+
+        System.out.println("CALLBACK - Token validation SUCCESS");
+        System.out.println("CALLBACK - Username: " + result.username);
+        System.out.println("CALLBACK - Email: " + result.email);
+        System.out.println("CALLBACK - Authorities: " + result.authorities);
+
+        // Create new session with user data
+        HttpSession oldSession = request.getSession(false);
+        String originalRequestUrl = null;
+        
+        if (oldSession != null) {
+            originalRequestUrl = (String) oldSession.getAttribute("originalRequestUrl");
+            System.out.println("CALLBACK - Original request URL from session: " + originalRequestUrl);
+            oldSession.invalidate();
+        }
+        
+        HttpSession newSession = request.getSession(true);
+        newSession. setAttribute("authenticated", Boolean.TRUE);
+        newSession. setAttribute("username", result.username);
+        newSession.setAttribute("email", result.email);
+        newSession.setAttribute("name", result.name);
+        newSession.setAttribute("authorities", result. authorities);
+        newSession.setMaxInactiveInterval(30 * 60); // 30 minutes
+
+        System.out.println("CALLBACK - Session created");
+        System.out.println("CALLBACK - Session ID: " + newSession.getId());
+        System.out.println("CALLBACK - Session is new: " + newSession.isNew());
+        System.out.println("CALLBACK - Authenticated: " + newSession.getAttribute("authenticated"));
+
+        // Determine where to redirect
+        String redirectTo;
+        if (returnUrl != null && !returnUrl.isEmpty()) {
+            redirectTo = returnUrl;
+        } else if (originalRequestUrl != null && !originalRequestUrl.isEmpty()) {
+            redirectTo = originalRequestUrl;
+        } else {
+            redirectTo = contextPath + "/home.html";
+        }
+
+        System.out.println("CALLBACK - Redirecting to: " + redirectTo);
+        System.out.println("==========================================");
+        
+        response.sendRedirect(redirectTo);
+    }
+
+    /**
+     * Validate token with gateway
+     */
+    private TokenValidationResult validateToken(String token) {
+        TokenValidationResult result = new TokenValidationResult();
+        
+        HttpClient httpClient = new HttpClient();
+        PostMethod postMethod = new PostMethod(gatewayUrl + "/auth/validate-token");
+
+        try {
+            postMethod. addParameter("token", token);
+            postMethod.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+
+            int statusCode = httpClient.executeMethod(postMethod);
+            System. out.println("CALLBACK - Gateway response status: " + statusCode);
+
+            if (statusCode == HttpStatus. SC_OK) {
+                BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(postMethod.getResponseBodyAsStream(), "UTF-8"));
+                
+                StringBuilder responseBody = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    responseBody.append(line);
+                }
+
+                String jsonResponse = responseBody.toString();
+                System.out.println("CALLBACK - Gateway response: " + jsonResponse);
+
+                result.success = jsonResponse.contains("\"success\":true") || 
+                                jsonResponse.contains("\"success\": true");
+
+                if (result.success) {
+                    result.username = extractJsonValue(jsonResponse, "username");
+                    result.email = extractJsonValue(jsonResponse, "email");
+                    result.name = extractJsonValue(jsonResponse, "name");
+                    result. authorities = extractJsonArray(jsonResponse, "authorities");
+                } else {
+                    result.error = extractJsonValue(jsonResponse, "error");
+                    if (result.error == null) {
+                        result. error = "Unknown error";
+                    }
+                }
+
+            } else {
+                result.success = false;
+                result.error = "HTTP " + statusCode;
+            }
+
+        } catch (Exception e) {
+            System.err.println("CALLBACK - Exception: " + e.getMessage());
+            e.printStackTrace();
+            result.success = false;
+            result.error = "Exception: " + e.getMessage();
+        } finally {
+            postMethod. releaseConnection();
+        }
+
+        return result;
+    }
+
+    /**
+     * Simple JSON value extractor
+     */
+    private String extractJsonValue(String json, String key) {
+        String searchKey = "\"" + key + "\":\"";
+        int startIndex = json.indexOf(searchKey);
+        if (startIndex == -1) {
+            searchKey = "\"" + key + "\": \"";
+            startIndex = json.indexOf(searchKey);
+        }
+        
+        if (startIndex != -1) {
+            startIndex += searchKey.length();
+            int endIndex = json.indexOf("\"", startIndex);
+            if (endIndex != -1) {
+                return json.substring(startIndex, endIndex);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Simple JSON array extractor
+     */
+    private List extractJsonArray(String json, String key) {
+        List result = new ArrayList();
+        String searchKey = "\"" + key + "\":[";
+        int startIndex = json.indexOf(searchKey);
+        
+        if (startIndex == -1) {
+            searchKey = "\"" + key + "\": [";
+            startIndex = json.indexOf(searchKey);
+        }
+
+        if (startIndex != -1) {
+            startIndex += searchKey.length();
+            int endIndex = json.indexOf("]", startIndex);
+            if (endIndex != -1) {
+                String arrayContent = json.substring(startIndex, endIndex);
+                String[] items = arrayContent.split(",");
+                for (int i = 0; i < items.length; i++) {
+                    String item = items[i].trim();
+                    if (item.startsWith("\"")) {
+                        item = item. substring(1);
+                    }
+                    if (item.endsWith("\"")) {
+                        item = item. substring(0, item.length() - 1);
+                    }
+                    if (! item.isEmpty()) {
+                        result.add(item);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    private boolean isStaticResource(String path) {
+        if (path == null || path.isEmpty()) {
+            return false;
+        }
+        
+        for (int i = 0; i < excludedExtensions.size(); i++) {
+            String extension = ((String) excludedExtensions.get(i)).trim(). toLowerCase();
+            if (path. toLowerCase().endsWith(extension)) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
     private boolean isExcludedPath(String path) {
         for (int i = 0; i < excludedPaths.size(); i++) {
             String excludedPath = ((String) excludedPaths.get(i)).trim();
@@ -109,34 +385,72 @@ public class GatewayAuthenticationFilter implements Filter {
         return false;
     }
 
-    /**
-     * Get the full request URL including query parameters
-     */
-    private String getFullRequestUrl(HttpServletRequest request) {
-        StringBuffer requestURL = request.getRequestURL();
-        String queryString = request.getQueryString();
-
-        if (queryString == null) {
-            return requestURL.toString();
-        } else {
-            return requestURL. append('?').append(queryString).toString();
+    private boolean isAuthenticationLoop(HttpSession session) {
+        Long lastAttemptTime = (Long) session.getAttribute(LAST_AUTH_ATTEMPT_TIME);
+        Integer attemptCount = (Integer) session. getAttribute(AUTH_ATTEMPT_COUNT);
+        
+        if (lastAttemptTime == null || attemptCount == null) {
+            return false;
         }
+        
+        long currentTime = System.currentTimeMillis();
+        long timeSinceLastAttempt = currentTime - lastAttemptTime. longValue();
+        
+        if (attemptCount. intValue() >= MAX_AUTH_ATTEMPTS && 
+            timeSinceLastAttempt < AUTH_ATTEMPT_WINDOW_MS) {
+            return true;
+        }
+        
+        if (timeSinceLastAttempt > AUTH_ATTEMPT_WINDOW_MS) {
+            session.removeAttribute(AUTH_ATTEMPT_COUNT);
+            session.removeAttribute(LAST_AUTH_ATTEMPT_TIME);
+            return false;
+        }
+        
+        return false;
     }
 
-    /**
-     * URL encode a string (Java 6 compatible)
-     */
+    private void incrementAuthAttempt(HttpSession session) {
+        Integer attemptCount = (Integer) session.getAttribute(AUTH_ATTEMPT_COUNT);
+        long currentTime = System.currentTimeMillis();
+        
+        if (attemptCount == null) {
+            attemptCount = Integer.valueOf(1);
+        } else {
+            attemptCount = Integer.valueOf(attemptCount. intValue() + 1);
+        }
+        
+        session. setAttribute(AUTH_ATTEMPT_COUNT, attemptCount);
+        session.setAttribute(LAST_AUTH_ATTEMPT_TIME, Long.valueOf(currentTime));
+    }
+
     private String encodeURIComponent(String s) {
         try {
-            return java.net.URLEncoder. encode(s, "UTF-8")
+            return java.net.URLEncoder.encode(s, "UTF-8")
                 .replaceAll("\\+", "%20")
-                .replaceAll("\\%21", "!")
+                . replaceAll("\\%21", "!")
                 .replaceAll("\\%27", "'")
-                . replaceAll("\\%28", "(")
+                .replaceAll("\\%28", "(")
                 .replaceAll("\\%29", ")")
                 .replaceAll("\\%7E", "~");
         } catch (java.io.UnsupportedEncodingException e) {
             return s;
         }
+    }
+
+    public void destroy() {
+        System.out.println("GatewayAuthenticationFilter destroyed");
+    }
+
+    /**
+     * Token validation result holder
+     */
+    private static class TokenValidationResult {
+        boolean success;
+        String username;
+        String email;
+        String name;
+        List authorities;
+        String error;
     }
 }
