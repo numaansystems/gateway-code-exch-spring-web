@@ -1,5 +1,6 @@
 package com.numaansystems.gateway.controller;
 
+import jakarta.annotation.PreDestroy;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.apache.hc.client5.http.classic.methods.*;
@@ -87,6 +88,22 @@ public class LegacyAppProxyController {
      */
     public LegacyAppProxyController() {
         this.httpClient = HttpClients.createDefault();
+    }
+
+    /**
+     * Cleanup method to close the HttpClient when the controller is destroyed.
+     * This prevents resource leaks.
+     */
+    @PreDestroy
+    public void cleanup() {
+        try {
+            if (httpClient != null) {
+                httpClient.close();
+                logger.info("HttpClient closed successfully");
+            }
+        } catch (IOException e) {
+            logger.warn("Error closing HttpClient: {}", e.getMessage());
+        }
     }
 
     /**
