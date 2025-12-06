@@ -73,8 +73,21 @@ public class LegacyAppProxyController {
         "te", "trailers", "transfer-encoding", "upgrade"
     );
 
+    /**
+     * Shared HttpClient instance for all proxy requests.
+     * This is thread-safe and reuses connections for better performance.
+     */
+    private final CloseableHttpClient httpClient;
+
     @Value("${legacy.app.url:http://localhost:8080/myapp}")
     private String legacyAppUrl;
+
+    /**
+     * Constructor that initializes the shared HttpClient.
+     */
+    public LegacyAppProxyController() {
+        this.httpClient = HttpClients.createDefault();
+    }
 
     /**
      * Proxies all requests under /app/** to the legacy application.
@@ -106,8 +119,8 @@ public class LegacyAppProxyController {
 
         logger.debug("Proxying request: {} {} → {}", request.getMethod(), path, targetUrl);
 
-        // Use Apache HttpClient 5 to proxy the request
-        try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
+        // Use shared HttpClient to proxy the request
+        try {
             ClassicHttpRequest proxyRequest = createProxyRequest(request.getMethod(), targetUrl);
 
             // Copy request body for methods that support it
@@ -138,7 +151,7 @@ public class LegacyAppProxyController {
         } catch (Exception e) {
             logger.error("Proxy request failed: {} → {}: {}", path, targetUrl, e.getMessage(), e);
             response.sendError(HttpServletResponse.SC_BAD_GATEWAY, 
-                "Failed to proxy request to legacy application: " + e.getMessage());
+                "Failed to proxy request to legacy application");
         }
     }
 
@@ -172,7 +185,7 @@ public class LegacyAppProxyController {
     private boolean hasRequestBody(String method) {
         String upperMethod = method.toUpperCase();
         return upperMethod.equals("POST") || upperMethod.equals("PUT") || 
-               upperMethod.equals("PATCH") || upperMethod.equals("DELETE");
+               upperMethod.equals("PATCH");
     }
 
     /**

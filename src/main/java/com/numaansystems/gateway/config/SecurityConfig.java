@@ -73,6 +73,8 @@ public class SecurityConfig {
             .cors(cors -> cors.configurationSource(corsConfigurationSource))
             .authorizeHttpRequests(authz -> authz
                 .requestMatchers("/actuator/**", "/error", "/auth/**").permitAll()
+                // Allow /app/** without gateway authentication - legacy app handles its own auth
+                // Note: In production, consider adding rate limiting or additional validation
                 .requestMatchers("/app/**").permitAll()
                 .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/api-docs/**", "/v3/api-docs/**").authenticated()
                 .anyRequest().authenticated()
