@@ -1,0 +1,32 @@
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+  security:
+    oauth2:
+      client:
+        registration:
+          azure:
+            client-id: test-client-id
+            client-secret: test-client-secret
+            scope: openid,profile,email
+            authorization-grant-type: authorization_code
+            redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
+        provider:
+          azure:
+            issuer-uri: https://login.microsoftonline.com/test-tenant-id/v2.0
+
+gateway:
+  allowed-redirect-domains:
+    - localhost
+  exchange-token:
+    ttl-minutes: 2
+  swagger:
+    enabled: false
+    allowed-users: []
+
+server:
+  port: 9090
+  servlet:
+    context-path: /gateway
