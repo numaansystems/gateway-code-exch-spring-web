@@ -1,11 +1,12 @@
-package com. numaansystems.gateway.config;
+package com.numaansystems.gateway.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework. security.web.SecurityFilterChain;
-import org.springframework.security.web. authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfigurationSource;
 
 /**
  * Spring Security configuration for Azure AD OAuth2 authentication.
@@ -39,28 +40,21 @@ public class SecurityConfig {
 
     private final CustomAuthenticationSuccessHandler successHandler;
     private final SwaggerAccessFilter swaggerAccessFilter;
-// Inject CorsConfigurationSource
-private final CorsConfigurationSource corsConfigurationSource;
+    private final CorsConfigurationSource corsConfigurationSource;
 
-public SecurityConfig(CustomAuthenticationSuccessHandler successHandler,
-                     SwaggerAccessFilter swaggerAccessFilter,
-                     ClientRegistrationRepository clientRegistrationRepository,
-                     CorsConfigurationSource corsConfigurationSource) {
-    this.successHandler = successHandler;
-    this.swaggerAccessFilter = swaggerAccessFilter;
-    this.clientRegistrationRepository = clientRegistrationRepository;
-    this. corsConfigurationSource = corsConfigurationSource;
-}
     /**
      * Constructor injection of custom authentication success handler and Swagger filter.
      * 
      * @param successHandler handles OAuth2 authentication success
      * @param swaggerAccessFilter filters Swagger access by user
+     * @param corsConfigurationSource CORS configuration
      */
     public SecurityConfig(CustomAuthenticationSuccessHandler successHandler,
-                         SwaggerAccessFilter swaggerAccessFilter) {
+                         SwaggerAccessFilter swaggerAccessFilter,
+                         CorsConfigurationSource corsConfigurationSource) {
         this.successHandler = successHandler;
-        this. swaggerAccessFilter = swaggerAccessFilter;
+        this.swaggerAccessFilter = swaggerAccessFilter;
+        this.corsConfigurationSource = corsConfigurationSource;
     }
 
     /**
@@ -73,26 +67,23 @@ public SecurityConfig(CustomAuthenticationSuccessHandler successHandler,
      * @return the configured SecurityFilterChain
      * @throws Exception if configuration fails
      */
-@Bean
-public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-    http
-        .cors(cors -> cors.configurationSource(corsConfigurationSource()))  // ← ADD THIS
-        .authorizeHttpRequests(authz -> authz
-            .requestMatchers("/actuator/**", "/error", "/auth/**").permitAll()
-            .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/api-docs/**", "/v3/api-docs/**").authenticated()
-            .anyRequest().authenticated()
-        )
-        .oauth2Login(oauth2 -> oauth2
-            .successHandler(successHandler)
-            .authorizationEndpoint(authorization -> authorization
-                .authorizationRequestResolver(customAuthorizationRequestResolver())
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        http
+            .cors(cors -> cors.configurationSource(corsConfigurationSource))
+            .authorizeHttpRequests(authz -> authz
+                .requestMatchers("/actuator/**", "/error", "/auth/**").permitAll()
+                .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/api-docs/**", "/v3/api-docs/**").authenticated()
+                .anyRequest().authenticated()
             )
-        )
-        .addFilterAfter(swaggerAccessFilter, UsernamePasswordAuthenticationFilter.class)
-        .csrf(csrf -> csrf.disable());
+            .oauth2Login(oauth2 -> oauth2
+                .successHandler(successHandler)
+            )
+            .addFilterAfter(swaggerAccessFilter, UsernamePasswordAuthenticationFilter.class)
+            .csrf(csrf -> csrf.disable());
 
-    return http.build();
-}
+        return http.build();
+    }
 
 
 }
