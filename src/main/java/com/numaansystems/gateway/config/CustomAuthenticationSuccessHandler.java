@@ -125,14 +125,29 @@ public class CustomAuthenticationSuccessHandler implements AuthenticationSuccess
      * Build callback URL from returnUrl by extracting protocol, host, port, and context path. 
      * Then append /auth/callback with token parameter.
      * 
+     * <p>If returnUrl already includes /gateway/app, it's already a proxied URL,
+     * so we append the token directly to maintain the proxy path.</p>
+     * 
      * Examples:
-     *   Input:  http://localhost:8080/myapp/index. html
+     *   Input:  http://localhost:8080/myapp/index.html
      *   Output: http://localhost:8080/myapp/auth/callback?token=xxx
+     * 
+     *   Input:  http://localhost:9090/gateway/app/home.html
+     *   Output: http://localhost:9090/gateway/app/home.html?token=xxx
      * 
      *   Input:  http://localhost:8080/index.html
      *   Output: http://localhost:8080/auth/callback?token=xxx
      */
     private String buildCallbackUrl(String returnUrl, String token) {
+        // If returnUrl already includes /gateway/app, it's already proxied
+        // Just append the token to the existing URL
+        if (returnUrl.contains("/gateway/app")) {
+            String separator = returnUrl.contains("?") ? "&" : "?";
+            String callbackUrl = returnUrl + separator + "token=" + token;
+            logger.debug("Proxied URL detected, appending token: {} → {}", returnUrl, callbackUrl);
+            return callbackUrl;
+        }
+        
         try {
             URL url = new URL(returnUrl);
             
@@ -144,7 +159,7 @@ public class CustomAuthenticationSuccessHandler implements AuthenticationSuccess
             
             // Build base URL with port if needed
             StringBuilder baseUrl = new StringBuilder();
-            baseUrl. append(protocol).append("://"). append(host);
+            baseUrl.append(protocol).append("://").append(host);
             if (port != -1 && port != 80 && port != 443) {
                 baseUrl.append(":").append(port);
             }
@@ -178,7 +193,7 @@ public class CustomAuthenticationSuccessHandler implements AuthenticationSuccess
         } catch (MalformedURLException e) {
             logger.error("Failed to parse returnUrl: {}", returnUrl, e);
             // Fallback: just append token to returnUrl
-            return returnUrl + (returnUrl.contains("? ") ? "&" : "?") + "token=" + token;
+            return returnUrl + (returnUrl.contains("?") ? "&" : "?") + "token=" + token;
         }
     }
 
