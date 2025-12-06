@@ -39,7 +39,18 @@ public class SecurityConfig {
 
     private final CustomAuthenticationSuccessHandler successHandler;
     private final SwaggerAccessFilter swaggerAccessFilter;
+// Inject CorsConfigurationSource
+private final CorsConfigurationSource corsConfigurationSource;
 
+public SecurityConfig(CustomAuthenticationSuccessHandler successHandler,
+                     SwaggerAccessFilter swaggerAccessFilter,
+                     ClientRegistrationRepository clientRegistrationRepository,
+                     CorsConfigurationSource corsConfigurationSource) {
+    this.successHandler = successHandler;
+    this.swaggerAccessFilter = swaggerAccessFilter;
+    this.clientRegistrationRepository = clientRegistrationRepository;
+    this. corsConfigurationSource = corsConfigurationSource;
+}
     /**
      * Constructor injection of custom authentication success handler and Swagger filter.
      * 
@@ -62,28 +73,26 @@ public class SecurityConfig {
      * @return the configured SecurityFilterChain
      * @throws Exception if configuration fails
      */
-    @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-        http
-            // Configure authorization
-            .authorizeHttpRequests(authz -> authz
-                // Public endpoints - no authentication required
-                .requestMatchers("/actuator/**", "/error", "/auth/**").permitAll()
-                // Swagger endpoints - authentication required (filtered by SwaggerAccessFilter)
-                .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/api-docs/**", "/v3/api-docs/**").authenticated()
-                // All other endpoints require authentication
-                .anyRequest().authenticated()
+@Bean
+public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    http
+        .cors(cors -> cors.configurationSource(corsConfigurationSource()))  // ← ADD THIS
+        .authorizeHttpRequests(authz -> authz
+            .requestMatchers("/actuator/**", "/error", "/auth/**").permitAll()
+            .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/api-docs/**", "/v3/api-docs/**").authenticated()
+            .anyRequest().authenticated()
+        )
+        .oauth2Login(oauth2 -> oauth2
+            .successHandler(successHandler)
+            .authorizationEndpoint(authorization -> authorization
+                .authorizationRequestResolver(customAuthorizationRequestResolver())
             )
-            // Configure OAuth2 login
-            .oauth2Login(oauth2 -> oauth2
-                // Custom success handler for token exchange
-                .successHandler(successHandler)
-            )
-            // Add Swagger access filter
-            .addFilterAfter(swaggerAccessFilter, UsernamePasswordAuthenticationFilter.class)
-            // Disable CSRF for stateless token exchange pattern
-            .csrf(csrf -> csrf.disable());
+        )
+        .addFilterAfter(swaggerAccessFilter, UsernamePasswordAuthenticationFilter.class)
+        .csrf(csrf -> csrf.disable());
 
-        return http.build();
-    }
+    return http.build();
+}
+
+
 }
