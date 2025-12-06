@@ -196,6 +196,12 @@ public class LegacyAppProxyController {
     /**
      * Checks if the HTTP method typically has a request body.
      * 
+     * <p>Note: DELETE is excluded from this list as per HTTP semantics (RFC 7231),
+     * which states that DELETE requests should not have a message body. While some
+     * APIs may include a body in DELETE requests, this is non-standard and should
+     * be avoided. If the legacy application requires DELETE with body, the request
+     * body can still be read from the input stream manually.</p>
+     * 
      * @param method the HTTP method
      * @return true if the method typically has a body
      */
