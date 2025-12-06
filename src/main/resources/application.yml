@@ -3,7 +3,10 @@ server:
   servlet:
     context-path: /gateway
     session:
+      timeout: 30m
       cookie:
+        name: GATEWAY_SESSION
+        path: /
         http-only: true
         secure: true
         same-site: lax
@@ -36,6 +39,11 @@ gateway:
     allowed-users:
       - admin@numaansystems.com
       - developer@numaansystems.com
+
+# Legacy application configuration
+legacy:
+  app:
+    url: http://localhost:8080/myapp
 
 management:
   endpoints:
