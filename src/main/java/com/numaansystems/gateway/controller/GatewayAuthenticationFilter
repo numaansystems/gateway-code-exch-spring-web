@@ -77,108 +77,94 @@ public class GatewayAuthenticationFilter implements Filter {
         System.out.println("==========================================");
     }
 
-    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
-            throws IOException, ServletException {
 
-        HttpServletRequest httpRequest = (HttpServletRequest) request;
-        HttpServletResponse httpResponse = (HttpServletResponse) response;
-        String requestURI = httpRequest.getRequestURI();
-        String contextPath = httpRequest.getContextPath();
-        String path = requestURI.substring(contextPath.length());
+public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
+        throws IOException, ServletException {
+// In doFilter method, when redirecting to gateway:
+String callbackUrl = GATEWAY_BASE_URL + "/app" + path;  // Callback goes through proxy
+String redirectUrl = GATEWAY_BASE_URL + "/auth/initiate?returnUrl=" + encodeURIComponent(callbackUrl);
+    HttpServletRequest httpRequest = (HttpServletRequest) request;
+    HttpServletResponse httpResponse = (HttpServletResponse) response;
+    String requestURI = httpRequest.getRequestURI();
+    String contextPath = httpRequest.getContextPath();
+    String path = requestURI. substring(contextPath.length());
 
-        // FAST PATH: Static resources - no authentication needed
-        if (isStaticResource(path)) {
-            chain.doFilter(request, response);
-            return;
-        }
-
-        // FAST PATH: Excluded paths - no authentication needed
-        if (isExcludedPath(path)) {
-            chain. doFilter(request, response);
-            return;
-        }
-
-        // Check for OAuth2 callback (token parameter from gateway)
-        String token = httpRequest.getParameter("token");
-        String returnUrl = httpRequest.getParameter("returnUrl");
-
-        if (token != null && ! token.isEmpty()) {
-            // THIS IS THE CALLBACK FROM GATEWAY - Handle token validation
-            System.out.println("==========================================");
-            System.out. println("FILTER - OAuth2 callback detected");
-            System.out.println("FILTER - Token: " + token. substring(0, Math.min(10, token.length())) + "...");
-            System.out.println("FILTER - Return URL: " + returnUrl);
-            
-            handleOAuth2Callback(httpRequest, httpResponse, token, returnUrl, contextPath);
-            return; // Don't continue chain - we're redirecting
-        }
-
-        // Check if user is already authenticated
-        HttpSession session = httpRequest.getSession(false);
-        Boolean authenticated = (session != null) 
-            ?  (Boolean) session.getAttribute("authenticated") 
-            : null;
-
-        if (Boolean.TRUE.equals(authenticated)) {
-            // FAST PATH: User is authenticated - allow request
-            chain.doFilter(request, response);
-            return;
-        }
-
-        // User NOT authenticated - need to redirect to gateway
-        System.out.println("==========================================");
-        System.out.println("FILTER - User NOT authenticated");
-        System.out.println("FILTER - Path: " + path);
-        System.out.println("FILTER - Session exists: " + (session != null));
-
-        // CHECK FOR AUTHENTICATION LOOP
-        if (session != null && isAuthenticationLoop(session)) {
-            System.err.println("FILTER - AUTHENTICATION LOOP DETECTED!");
-            System.err.println("FILTER - Redirecting to error page");
-            System.out.println("==========================================");
-            
-            session.invalidate();
-            httpResponse.sendRedirect(contextPath + "/error.html? error=auth_loop");
-            return;
-        }
-
-        // Track authentication attempt
-        if (session == null) {
-            session = httpRequest.getSession(true);
-        }
-        incrementAuthAttempt(session);
-
-        // Build callback URL (this filter will handle the callback)
-        String scheme = httpRequest.getScheme();
-        String serverName = httpRequest.getServerName();
-        int serverPort = httpRequest.getServerPort();
-        
-        String portPart = "";
-        if ((scheme.equals("http") && serverPort != 80) || 
-            (scheme.equals("https") && serverPort != 443)) {
-            portPart = ":" + serverPort;
-        }
-        
-        // Store the originally requested URL in session
-        String originalUrl = scheme + "://" + serverName + portPart + requestURI;
-        if (httpRequest.getQueryString() != null) {
-            originalUrl += "?" + httpRequest.getQueryString();
-        }
-        session.setAttribute("originalRequestUrl", originalUrl);
-        
-        // Callback URL points back to this filter
-        String callbackUrl = scheme + "://" + serverName + portPart + contextPath + path;
-        String redirectUrl = gatewayUrl + "/auth/initiate? returnUrl=" 
-            + encodeURIComponent(callbackUrl);
-
-        System.out.println("FILTER - Original URL: " + originalUrl);
-        System.out.println("FILTER - Callback URL: " + callbackUrl);
-        System.out.println("FILTER - Redirecting to gateway: " + redirectUrl);
-        System.out.println("==========================================");
-        
-        httpResponse.sendRedirect(redirectUrl);
+    // FAST PATH: Static resources
+    if (isStaticResource(path)) {
+        chain.doFilter(request, response);
+        return;
     }
 
+    // FAST PATH: Excluded paths
+    if (isExcludedPath(path)) {
+        chain.doFilter(request, response);
+        return;
+    }
+
+    // Check for OAuth2 callback (token parameter from gateway)
+    String token = httpRequest.getParameter("token");
+    String returnUrl = httpRequest.getParameter("returnUrl");
+
+    if (token != null && ! token.isEmpty()) {
+        System.out.println("==========================================");
+        System.out.println("FILTER - OAuth2 callback detected");
+        System.out.println("FILTER - Token: " + token. substring(0, Math.min(10, token.length())) + "...");
+        
+        handleOAuth2Callback(httpRequest, httpResponse, token, returnUrl, contextPath);
+        return;
+    }
+
+    // Check if user is authenticated
+    HttpSession session = httpRequest.getSession(false);
+    Boolean authenticated = (session != null) 
+        ? (Boolean) session. getAttribute("authenticated") 
+        : null;
+
+    if (Boolean.TRUE.equals(authenticated)) {
+        // User authenticated - allow request
+        chain.doFilter(request, response);
+        return;
+    }
+
+    // User NOT authenticated - redirect to gateway
+    System.out.println("==========================================");
+    System.out.println("FILTER - User NOT authenticated");
+    System.out.println("FILTER - Path: " + path);
+
+    // CHECK FOR AUTHENTICATION LOOP
+    if (session == null) {
+        session = httpRequest.getSession(true);
+    }
+    
+    if (isAuthenticationLoop(session)) {
+        System.err.println("FILTER - AUTHENTICATION LOOP DETECTED!");
+        session.invalidate();
+        httpResponse.sendRedirect(contextPath + "/error. html? error=auth_loop");
+        return;
+    }
+
+    incrementAuthAttempt(session);
+
+    // Store original URL
+    String originalUrl = requestURI;
+    if (httpRequest.getQueryString() != null) {
+        originalUrl += "?" + httpRequest.getQueryString();
+    }
+    session.setAttribute("originalRequestUrl", originalUrl);
+
+    // IMPORTANT: Callback URL goes through gateway proxy
+    // Instead of: http://localhost:8080/myapp/home.html
+    // Use: http://localhost:9090/gateway/app/home.html
+    String callbackUrl = GATEWAY_BASE_URL + "/app" + path;
+    String redirectUrl = GATEWAY_BASE_URL + "/auth/initiate?returnUrl=" + encodeURIComponent(callbackUrl);
+
+    System.out. println("FILTER - Original URL: " + originalUrl);
+    System.out.println("FILTER - Callback URL (proxied): " + callbackUrl);
+    System.out.println("FILTER - Redirecting to: " + redirectUrl);
+    System.out.println("==========================================");
+
+    httpResponse.sendRedirect(redirectUrl);
+}
     /**
      * Handle OAuth2 callback with token from gateway
      */
