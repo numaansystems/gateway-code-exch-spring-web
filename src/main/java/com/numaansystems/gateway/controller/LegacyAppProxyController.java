@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
 import java.util.Enumeration;
+import java.util.Set;
 
 /**
  * Reverse proxy controller that forwards requests to a legacy application.
@@ -44,6 +45,15 @@ import java.util.Enumeration;
 public class LegacyAppProxyController {
 
     private static final Logger logger = LoggerFactory.getLogger(LegacyAppProxyController.class);
+    
+    /**
+     * Set of hop-by-hop headers that should not be forwarded.
+     * These headers are meaningful only for a single transport-level connection.
+     */
+    private static final Set<String> HOP_BY_HOP_HEADERS = Set.of(
+        "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+        "te", "trailers", "transfer-encoding", "upgrade", "host"
+    );
 
     @Value("${legacy.app.url:http://localhost:8080}")
     private String legacyAppUrl;
@@ -104,6 +114,10 @@ public class LegacyAppProxyController {
             // Copy request body for methods that support it
             if (hasRequestBody(request.getMethod())) {
                 long contentLength = request.getContentLength();
+                // Use -1 if content length is unknown, HttpClient will use chunked encoding
+                if (contentLength < 0) {
+                    contentLength = -1;
+                }
                 proxyRequest.setEntity(new InputStreamEntity(request.getInputStream(), contentLength, null));
             }
 
@@ -195,15 +209,6 @@ public class LegacyAppProxyController {
      * These headers are meaningful only for a single transport-level connection.
      */
     private boolean isHopByHopHeader(String headerName) {
-        String lowerName = headerName.toLowerCase();
-        return lowerName.equals("connection") ||
-               lowerName.equals("keep-alive") ||
-               lowerName.equals("proxy-authenticate") ||
-               lowerName.equals("proxy-authorization") ||
-               lowerName.equals("te") ||
-               lowerName.equals("trailers") ||
-               lowerName.equals("transfer-encoding") ||
-               lowerName.equals("upgrade") ||
-               lowerName.equals("host"); // Host header should be set by HttpClient
+        return HOP_BY_HOP_HEADERS.contains(headerName.toLowerCase());
     }
 }

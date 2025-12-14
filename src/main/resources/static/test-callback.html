@@ -364,9 +364,20 @@
             // Get the current page's base URL
             const protocol = window.location.protocol;
             const host = window.location.host;
-            const contextPath = window.location.pathname.split('/')[1]; // e.g., 'gateway'
             
-            return `${protocol}//${host}/${contextPath}`;
+            // Extract context path more reliably
+            // If pathname is /gateway/test/callback-test, context path is /gateway
+            // If pathname is /test/callback-test (root context), context path is empty
+            const pathname = window.location.pathname;
+            let contextPath = '';
+            
+            // Check if path starts with a known static resource path
+            const staticPathMatch = pathname.match(/^(\/[^\/]+)?\/(test|auth|myapp)/);
+            if (staticPathMatch && staticPathMatch[1]) {
+                contextPath = staticPathMatch[1];
+            }
+            
+            return `${protocol}//${host}${contextPath}`;
         }
 
         function log(message, level = 'info') {
