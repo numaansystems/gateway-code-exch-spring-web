@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth Flow Test - Gateway</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-top: 0;
+        }
+        h2 {
+            color: #555;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+            margin-top: 30px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 5px;
+        }
+        .button {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        .button:hover {
+            background-color: #0056b3;
+        }
+        .button.secondary {
+            background-color: #6c757d;
+        }
+        .button.secondary:hover {
+            background-color: #545b62;
+        }
+        .success {
+            color: #28a745;
+            font-weight: bold;
+        }
+        .error {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        .info {
+            color: #17a2b8;
+        }
+        .token-display {
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 4px;
+            word-wrap: break-word;
+            font-family: 'Courier New', monospace;
+            margin: 10px 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        table th, table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        table th {
+            background-color: #007bff;
+            color: white;
+        }
+        .log {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            margin: 10px 0;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 3px 0;
+        }
+        .log-time {
+            color: #858585;
+        }
+        .log-info {
+            color: #4ec9b0;
+        }
+        .log-success {
+            color: #b5cea8;
+        }
+        .log-error {
+            color: #f48771;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        label {
+            display: block;
+            margin: 10px 0 5px 0;
+            font-weight: bold;
+            color: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 OAuth Flow Test Page</h1>
+        <p>This page helps you test the OAuth authentication flow and token exchange mechanism.</p>
+
+        <h2>1. Start OAuth Flow</h2>
+        <div class="section">
+            <label for="returnUrl">Return URL (where to redirect after authentication):</label>
+            <input type="text" id="returnUrl" placeholder="http://localhost:8080/myapp/home.html">
+            <br><br>
+            <button class="button" onclick="startOAuthFlow()">Start OAuth Flow</button>
+            <button class="button secondary" onclick="startOAuthFlowWithReauth()">Start with Force Reauth</button>
+            <p class="info">Click to initiate authentication with Azure AD</p>
+        </div>
+
+        <h2>2. Token Display</h2>
+        <div class="section">
+            <div id="tokenSection">
+                <p class="info">No token received yet. Token will appear here after OAuth callback.</p>
+            </div>
+        </div>
+
+        <h2>3. Token Validation</h2>
+        <div class="section">
+            <label for="tokenInput">Paste token to validate:</label>
+            <input type="text" id="tokenInput" placeholder="Enter exchange token">
+            <br><br>
+            <button class="button" onclick="validateToken()">Validate Token</button>
+            <div id="validationResult" style="margin-top: 15px;"></div>
+        </div>
+
+        <h2>4. Test Public Endpoint</h2>
+        <div class="section">
+            <button class="button secondary" onclick="testPublicEndpoint()">Test /test/public</button>
+            <div id="publicResult" style="margin-top: 15px;"></div>
+        </div>
+
+        <h2>5. Test Protected Endpoint</h2>
+        <div class="section">
+            <button class="button secondary" onclick="testProtectedEndpoint()">Test /test/protected</button>
+            <div id="protectedResult" style="margin-top: 15px;"></div>
+        </div>
+
+        <h2>6. Activity Log</h2>
+        <div class="section">
+            <div id="log" class="log">
+                <div class="log-entry"><span class="log-time">[System]</span> <span class="log-info">Test page loaded</span></div>
+            </div>
+            <button class="button secondary" onclick="clearLog()">Clear Log</button>
+        </div>
+    </div>
+
+    <script>
+        // Check for token in URL on page load
+        window.onload = function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const token = urlParams.get('token');
+            const returnUrl = urlParams.get('returnUrl');
+            
+            if (token) {
+                log('Token received from OAuth callback', 'success');
+                displayToken(token, returnUrl);
+            }
+        };
+
+        function startOAuthFlow() {
+            const returnUrl = document.getElementById('returnUrl').value || window.location.href;
+            const gatewayUrl = getGatewayUrl();
+            const authUrl = `${gatewayUrl}/auth/initiate?returnUrl=${encodeURIComponent(returnUrl)}`;
+            
+            log(`Starting OAuth flow with return URL: ${returnUrl}`, 'info');
+            log(`Redirecting to: ${authUrl}`, 'info');
+            
+            window.location.href = authUrl;
+        }
+
+        function startOAuthFlowWithReauth() {
+            const returnUrl = document.getElementById('returnUrl').value || window.location.href;
+            const gatewayUrl = getGatewayUrl();
+            const authUrl = `${gatewayUrl}/auth/initiate?returnUrl=${encodeURIComponent(returnUrl)}&forceReauth=true`;
+            
+            log(`Starting OAuth flow with force reauth, return URL: ${returnUrl}`, 'info');
+            log(`Redirecting to: ${authUrl}`, 'info');
+            
+            window.location.href = authUrl;
+        }
+
+        function displayToken(token, returnUrl) {
+            const tokenSection = document.getElementById('tokenSection');
+            
+            let html = '<p class="success">✓ Token received successfully!</p>';
+            html += '<div class="token-display">';
+            html += '<strong>Token:</strong><br>' + token;
+            html += '</div>';
+            
+            if (returnUrl) {
+                html += '<div class="token-display">';
+                html += '<strong>Original Return URL:</strong><br>' + returnUrl;
+                html += '</div>';
+            }
+            
+            html += '<button class="button" onclick="validateCurrentToken()">Validate This Token</button>';
+            html += '<button class="button secondary" onclick="copyToken()">Copy Token</button>';
+            
+            tokenSection.innerHTML = html;
+            
+            // Auto-populate token input
+            document.getElementById('tokenInput').value = token;
+        }
+
+        function copyToken() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const token = urlParams.get('token');
+            
+            if (token) {
+                navigator.clipboard.writeText(token).then(() => {
+                    log('Token copied to clipboard', 'success');
+                });
+            }
+        }
+
+        function validateCurrentToken() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const token = urlParams.get('token');
+            
+            if (token) {
+                document.getElementById('tokenInput').value = token;
+                validateToken();
+            }
+        }
+
+        function validateToken() {
+            const token = document.getElementById('tokenInput').value;
+            
+            if (!token) {
+                log('No token provided for validation', 'error');
+                return;
+            }
+            
+            log(`Validating token: ${token.substring(0, 20)}...`, 'info');
+            
+            const gatewayUrl = getGatewayUrl();
+            fetch(`${gatewayUrl}/auth/validate-token?token=${encodeURIComponent(token)}`, {
+                method: 'POST'
+            })
+            .then(response => {
+                log(`Validation response status: ${response.status}`, 'info');
+                return response.json();
+            })
+            .then(data => {
+                const resultDiv = document.getElementById('validationResult');
+                
+                if (data.success) {
+                    log('✓ Token validation successful', 'success');
+                    
+                    let html = '<p class="success">✓ Token is valid!</p>';
+                    html += '<table>';
+                    html += '<tr><th>Property</th><th>Value</th></tr>';
+                    html += `<tr><td>Username</td><td>${data.username || 'N/A'}</td></tr>`;
+                    html += `<tr><td>Email</td><td>${data.email || 'N/A'}</td></tr>`;
+                    html += `<tr><td>Name</td><td>${data.name || 'N/A'}</td></tr>`;
+                    html += `<tr><td>Authorities</td><td>${data.authorities ? data.authorities.join(', ') : 'N/A'}</td></tr>`;
+                    html += '</table>';
+                    
+                    resultDiv.innerHTML = html;
+                } else {
+                    log(`✗ Token validation failed: ${data.error}`, 'error');
+                    resultDiv.innerHTML = `<p class="error">✗ ${data.error || 'Token validation failed'}</p>`;
+                }
+            })
+            .catch(error => {
+                log(`✗ Error validating token: ${error.message}`, 'error');
+                document.getElementById('validationResult').innerHTML = 
+                    `<p class="error">✗ Error: ${error.message}</p>`;
+            });
+        }
+
+        function testPublicEndpoint() {
+            log('Testing public endpoint /test/public', 'info');
+            
+            const gatewayUrl = getGatewayUrl();
+            fetch(`${gatewayUrl}/test/public`)
+            .then(response => {
+                log(`Public endpoint response status: ${response.status}`, 'info');
+                return response.json();
+            })
+            .then(data => {
+                log('✓ Public endpoint accessible', 'success');
+                
+                let html = '<p class="success">✓ Public endpoint accessible</p>';
+                html += '<div class="token-display">' + JSON.stringify(data, null, 2) + '</div>';
+                
+                document.getElementById('publicResult').innerHTML = html;
+            })
+            .catch(error => {
+                log(`✗ Error accessing public endpoint: ${error.message}`, 'error');
+                document.getElementById('publicResult').innerHTML = 
+                    `<p class="error">✗ Error: ${error.message}</p>`;
+            });
+        }
+
+        function testProtectedEndpoint() {
+            log('Testing protected endpoint /test/protected', 'info');
+            
+            const gatewayUrl = getGatewayUrl();
+            fetch(`${gatewayUrl}/test/protected`)
+            .then(response => {
+                log(`Protected endpoint response status: ${response.status}`, 'info');
+                return response.json();
+            })
+            .then(data => {
+                if (data.authenticated) {
+                    log('✓ Protected endpoint accessible (authenticated)', 'success');
+                } else {
+                    log('Protected endpoint accessible but not authenticated', 'info');
+                }
+                
+                let html = data.authenticated ? 
+                    '<p class="success">✓ Authenticated</p>' : 
+                    '<p class="info">Not authenticated</p>';
+                html += '<div class="token-display">' + JSON.stringify(data, null, 2) + '</div>';
+                
+                document.getElementById('protectedResult').innerHTML = html;
+            })
+            .catch(error => {
+                log(`✗ Error accessing protected endpoint: ${error.message}`, 'error');
+                document.getElementById('protectedResult').innerHTML = 
+                    `<p class="error">✗ Error: ${error.message}</p>`;
+            });
+        }
+
+        function getGatewayUrl() {
+            // Get the current page's base URL
+            const protocol = window.location.protocol;
+            const host = window.location.host;
+            
+            // Extract context path more reliably
+            // If pathname is /gateway/test/callback-test, context path is /gateway
+            // If pathname is /test/callback-test (root context), context path is empty
+            const pathname = window.location.pathname;
+            let contextPath = '';
+            
+            // Check if path starts with a known static resource path
+            const staticPathMatch = pathname.match(/^(\/[^\/]+)?\/(test|auth|myapp)/);
+            if (staticPathMatch && staticPathMatch[1]) {
+                contextPath = staticPathMatch[1];
+            }
+            
+            return `${protocol}//${host}${contextPath}`;
+        }
+
+        function log(message, level = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const levelClass = `log-${level}`;
+            
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<span class="log-time">[${timestamp}]</span> <span class="${levelClass}">${message}</span>`;
+            
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+            log('Log cleared', 'info');
+        }
+    </script>
+</body>
+</html>

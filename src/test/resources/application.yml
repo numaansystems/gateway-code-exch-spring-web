@@ -1,0 +1,24 @@
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
+
+server:
+  port: 9090
+  servlet:
+    context-path: /gateway
+
+gateway:
+  allowed-redirect-domains:
+    - localhost
+    - app.example.com
+  exchange-token:
+    ttl-minutes: 2
+  swagger:
+    enabled: false
+
+legacy:
+  app:
+    url: http://localhost:8080

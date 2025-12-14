@@ -37,6 +37,10 @@ gateway:
       - admin@numaansystems.com
       - developer@numaansystems.com
 
+legacy:
+  app:
+    url: "${LEGACY_APP_URL:http://localhost:8080}"
+
 management:
   endpoints:
     web:
@@ -52,5 +56,7 @@ springdoc:
 
 logging:
   level:
-    com.numaansystems.gateway: INFO
+    com.numaansystems.gateway: DEBUG
+    com.numaansystems.gateway.controller.LegacyAppProxyController: INFO
     org.springframework.security: INFO
+    org.springframework.security.oauth2: DEBUG

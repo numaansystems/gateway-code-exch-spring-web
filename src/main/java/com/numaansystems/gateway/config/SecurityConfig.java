@@ -68,7 +68,9 @@ public class SecurityConfig {
             // Configure authorization
             .authorizeHttpRequests(authz -> authz
                 // Public endpoints - no authentication required
-                .requestMatchers("/actuator/**", "/error", "/auth/**").permitAll()
+                .requestMatchers("/actuator/**", "/error", "/auth/**", "/test/**").permitAll()
+                // Proxied legacy app endpoints - no authentication required (legacy app handles auth)
+                .requestMatchers("/myapp/**").permitAll()
                 // Swagger endpoints - authentication required (filtered by SwaggerAccessFilter)
                 .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/api-docs/**", "/v3/api-docs/**").authenticated()
                 // All other endpoints require authentication
