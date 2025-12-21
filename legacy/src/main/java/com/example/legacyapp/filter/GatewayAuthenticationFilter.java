@@ -1,257 +1,550 @@
 package com.example.legacyapp.filter;
 
-import javax.servlet.*;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import javax.servlet.Filter;
+import javax.servlet.FilterChain;
+import javax.servlet.FilterConfig;
+import javax.servlet.ServletException;
+import javax.servlet.ServletRequest;
+import javax.servlet.ServletResponse;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Gateway Authentication Filter for legacy Java 6 servlet containers.
- * This filter validates gateway requests using HMAC-based authentication.
+ * Gateway Authentication Filter implementing OAuth flow with gateway endpoints.
+ * 
+ * This filter intercepts requests and performs authentication via:
+ * 1. /auth/initiate - Initiates the OAuth flow and returns authorization URL
+ * 2. /auth/validate-token - Validates the access token received from OAuth callback
+ * 
+ * Java 6 compatible implementation with comprehensive logging.
+ * 
+ * @author numaansystems
+ * @version 1.0
+ * @since 2025-12-21
  */
 public class GatewayAuthenticationFilter implements Filter {
     
-    private static final String UTF_8 = "UTF-8";
-    private static final String AUTHORIZATION_HEADER = "Authorization";
-    private static final String GATEWAY_SIGNATURE_HEADER = "X-Gateway-Signature";
-    private static final String ALLOWED_ORIGINS_PARAM = "allowedOrigins";
+    private static final Log logger = LogFactory.getLog(GatewayAuthenticationFilter.class);
     
-    private String secretKey;
-    private List<String> allowedOrigins;
+    // Configuration parameters
+    private String gatewayBaseUrl;
+    private String callbackUrl;
+    private int connectionTimeout = 30000; // 30 seconds
+    private int readTimeout = 30000; // 30 seconds
     
+    // Session attribute keys
+    private static final String SESSION_ACCESS_TOKEN = "oauth_access_token";
+    private static final String SESSION_USER_INFO = "oauth_user_info";
+    private static final String SESSION_STATE = "oauth_state";
+    
+    // Request parameter keys
+    private static final String PARAM_CODE = "code";
+    private static final String PARAM_STATE = "state";
+    private static final String PARAM_ERROR = "error";
+    
+    // Paths to exclude from authentication
+    private List<String> excludedPaths;
+
+    /**
+     * Initialize the filter with configuration parameters.
+     */
     public void init(FilterConfig filterConfig) throws ServletException {
-        // Load secret key from filter config or system property
-        secretKey = filterConfig.getInitParameter("secretKey");
-        if (secretKey == null || secretKey.length() == 0) {
-            secretKey = System.getProperty("gateway.secret.key");
+        logger.info("Initializing GatewayAuthenticationFilter");
+        
+        // Load configuration from filter init parameters
+        gatewayBaseUrl = filterConfig.getInitParameter("gatewayBaseUrl");
+        callbackUrl = filterConfig.getInitParameter("callbackUrl");
+        
+        String timeoutStr = filterConfig.getInitParameter("connectionTimeout");
+        if (timeoutStr != null && timeoutStr.length() > 0) {
+            try {
+                connectionTimeout = Integer.parseInt(timeoutStr);
+            } catch (NumberFormatException e) {
+                logger.warn("Invalid connectionTimeout value, using default: " + connectionTimeout);
+            }
         }
         
-        if (secretKey == null || secretKey.length() == 0) {
-            throw new ServletException("Gateway secret key not configured");
+        timeoutStr = filterConfig.getInitParameter("readTimeout");
+        if (timeoutStr != null && timeoutStr.length() > 0) {
+            try {
+                readTimeout = Integer.parseInt(timeoutStr);
+            } catch (NumberFormatException e) {
+                logger.warn("Invalid readTimeout value, using default: " + readTimeout);
+            }
         }
         
-        // Load allowed origins
-        String originsParam = filterConfig.getInitParameter(ALLOWED_ORIGINS_PARAM);
-        if (originsParam != null && originsParam.length() > 0) {
-            allowedOrigins = parseCommaSeparated(originsParam);
-        } else {
-            allowedOrigins = new ArrayList<String>();
-            allowedOrigins.add("*");
+        // Initialize excluded paths
+        excludedPaths = new ArrayList<String>();
+        excludedPaths.add("/auth/callback");
+        excludedPaths.add("/public");
+        excludedPaths.add("/health");
+        excludedPaths.add("/static");
+        
+        String customExcludedPaths = filterConfig.getInitParameter("excludedPaths");
+        if (customExcludedPaths != null && customExcludedPaths.length() > 0) {
+            String[] paths = customExcludedPaths.split(",");
+            for (int i = 0; i < paths.length; i++) {
+                excludedPaths.add(paths[i].trim());
+            }
         }
+        
+        // Validate required configuration
+        if (gatewayBaseUrl == null || gatewayBaseUrl.length() == 0) {
+            throw new ServletException("gatewayBaseUrl is required");
+        }
+        if (callbackUrl == null || callbackUrl.length() == 0) {
+            throw new ServletException("callbackUrl is required");
+        }
+        
+        logger.info("GatewayAuthenticationFilter initialized successfully");
+        logger.info("Gateway Base URL: " + gatewayBaseUrl);
+        logger.info("Callback URL: " + callbackUrl);
+        logger.info("Connection Timeout: " + connectionTimeout + "ms");
+        logger.info("Read Timeout: " + readTimeout + "ms");
+        logger.info("Excluded Paths: " + excludedPaths.toString());
     }
-    
-    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
+
+    /**
+     * Main filter logic for authentication.
+     */
+    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) 
             throws IOException, ServletException {
         
         HttpServletRequest httpRequest = (HttpServletRequest) request;
         HttpServletResponse httpResponse = (HttpServletResponse) response;
         
-        // Extract authentication header
-        String authHeader = httpRequest.getHeader(AUTHORIZATION_HEADER);
-        String signatureHeader = httpRequest.getHeader(GATEWAY_SIGNATURE_HEADER);
+        String requestUri = httpRequest.getRequestURI();
+        String contextPath = httpRequest.getContextPath();
+        String path = requestUri.substring(contextPath.length());
         
-        // Validate authentication
-        if (!isValidAuthentication(httpRequest, authHeader, signatureHeader)) {
-            httpResponse.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            httpResponse.setContentType("application/json");
-            httpResponse.getWriter().write("{\"error\":\"Unauthorized\",\"message\":\"Invalid gateway authentication\"}");
+        logger.debug("Processing request for path: " + path);
+        
+        // Check if path should be excluded from authentication
+        if (isExcludedPath(path)) {
+            logger.debug("Path excluded from authentication: " + path);
+            chain.doFilter(request, response);
             return;
         }
         
-        // Validate origin
-        String origin = httpRequest.getHeader("Origin");
-        if (!isAllowedOrigin(origin)) {
-            httpResponse.setStatus(HttpServletResponse.SC_FORBIDDEN);
-            httpResponse.setContentType("application/json");
-            httpResponse.getWriter().write("{\"error\":\"Forbidden\",\"message\":\"Origin not allowed\"}");
+        HttpSession session = httpRequest.getSession(true);
+        
+        // Handle OAuth callback
+        if (path.startsWith("/auth/callback")) {
+            handleOAuthCallback(httpRequest, httpResponse, session);
             return;
         }
         
-        // Continue with the filter chain
-        chain.doFilter(request, response);
-    }
-    
-    public void destroy() {
-        // Cleanup resources
-        secretKey = null;
-        if (allowedOrigins != null) {
-            allowedOrigins.clear();
-            allowedOrigins = null;
-        }
-    }
-    
-    /**
-     * Validates the authentication headers against the expected signature.
-     */
-    private boolean isValidAuthentication(HttpServletRequest request, String authHeader, String signatureHeader) {
-        if (authHeader == null || authHeader.length() == 0) {
-            return false;
-        }
-        
-        if (signatureHeader == null || signatureHeader.length() == 0) {
-            return false;
-        }
-        
-        // Build the signature payload
-        StringBuffer payload = new StringBuffer();
-        payload.append(request.getMethod());
-        payload.append(":");
-        payload.append(request.getRequestURI());
-        
-        String queryString = request.getQueryString();
-        if (queryString != null && queryString.length() > 0) {
-            payload.append("?");
-            payload.append(queryString);
-        }
-        
-        // Calculate expected signature
-        String expectedSignature = null;
-        try {
-            expectedSignature = calculateSignature(payload.toString(), secretKey);
-        } catch (Exception e) {
-            return false;
-        }
-        
-        // Compare signatures
-        return signatureHeader.equals(expectedSignature);
-    }
-    
-    /**
-     * Calculates HMAC-SHA256 signature for the given payload.
-     */
-    private String calculateSignature(String payload, String secret) throws NoSuchAlgorithmException, UnsupportedEncodingException {
-        // Simple HMAC-SHA256 implementation for Java 6
-        StringBuffer combined = new StringBuffer();
-        combined.append(payload);
-        combined.append(secret);
-        
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        byte[] hash = digest.digest(combined.toString().getBytes(UTF_8));
-        
-        return base64UrlEncode(hash);
-    }
-    
-    /**
-     * Base64 URL-safe encoding implementation for Java 6.
-     * Implements RFC 4648 Base64url encoding without padding.
-     */
-    private String base64UrlEncode(byte[] data) {
-        if (data == null || data.length == 0) {
-            return "";
-        }
-        
-        // Standard Base64 alphabet
-        final char[] BASE64_ALPHABET = 
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toCharArray();
-        
-        StringBuffer result = new StringBuffer();
-        int padding = 0;
-        
-        for (int i = 0; i < data.length; i += 3) {
-            int b = (data[i] & 0xFF) << 16;
-            if (i + 1 < data.length) {
-                b |= (data[i + 1] & 0xFF) << 8;
+        // Check if user is already authenticated
+        String accessToken = (String) session.getAttribute(SESSION_ACCESS_TOKEN);
+        if (accessToken != null && accessToken.length() > 0) {
+            logger.debug("User already authenticated with access token");
+            // Validate token is still valid
+            if (validateToken(accessToken)) {
+                logger.debug("Access token is valid, proceeding with request");
+                chain.doFilter(request, response);
+                return;
             } else {
-                padding++;
+                logger.info("Access token is invalid or expired, initiating new authentication");
+                session.removeAttribute(SESSION_ACCESS_TOKEN);
+                session.removeAttribute(SESSION_USER_INFO);
             }
-            if (i + 2 < data.length) {
-                b |= (data[i + 2] & 0xFF);
+        }
+        
+        // Initiate OAuth flow
+        logger.info("User not authenticated, initiating OAuth flow");
+        initiateOAuthFlow(httpRequest, httpResponse, session);
+    }
+
+    /**
+     * Initiates the OAuth flow by calling /auth/initiate endpoint.
+     */
+    private void initiateOAuthFlow(HttpServletRequest request, HttpServletResponse response, 
+                                    HttpSession session) throws IOException {
+        logger.info("Initiating OAuth flow via /auth/initiate endpoint");
+        
+        HttpURLConnection conn = null;
+        BufferedReader reader = null;
+        
+        try {
+            // Generate and store state parameter for CSRF protection
+            String state = generateState();
+            session.setAttribute(SESSION_STATE, state);
+            logger.debug("Generated OAuth state: " + state);
+            
+            // Build request to /auth/initiate
+            URL url = new URL(gatewayBaseUrl + "/auth/initiate");
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setConnectTimeout(connectionTimeout);
+            conn.setReadTimeout(readTimeout);
+            conn.setDoOutput(true);
+            
+            // Build request body
+            StringBuilder requestBody = new StringBuilder();
+            requestBody.append("callback_url=").append(URLEncoder.encode(callbackUrl, "UTF-8"));
+            requestBody.append("&state=").append(URLEncoder.encode(state, "UTF-8"));
+            
+            // Send request
+            OutputStream os = conn.getOutputStream();
+            os.write(requestBody.toString().getBytes("UTF-8"));
+            os.flush();
+            os.close();
+            
+            int responseCode = conn.getResponseCode();
+            logger.info("Received response from /auth/initiate: " + responseCode);
+            
+            if (responseCode == HttpURLConnection.HTTP_OK) {
+                // Read response
+                reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), "UTF-8"));
+                StringBuilder responseBuilder = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    responseBuilder.append(line);
+                }
+                
+                String responseBody = responseBuilder.toString();
+                logger.debug("Response body: " + responseBody);
+                
+                // Parse authorization URL from response
+                String authUrl = extractAuthorizationUrl(responseBody);
+                if (authUrl != null && authUrl.length() > 0) {
+                    logger.info("Redirecting to authorization URL: " + authUrl);
+                    response.sendRedirect(authUrl);
+                } else {
+                    logger.error("Failed to extract authorization URL from response");
+                    sendErrorResponse(response, "Failed to initiate authentication");
+                }
             } else {
-                padding++;
+                logger.error("Failed to initiate OAuth flow. Response code: " + responseCode);
+                String errorMsg = readErrorResponse(conn);
+                logger.error("Error response: " + errorMsg);
+                sendErrorResponse(response, "Authentication service unavailable");
             }
             
-            for (int j = 0; j < 4 - padding; j++) {
-                int c = (b >> (18 - j * 6)) & 0x3F;
-                result.append(BASE64_ALPHABET[c]);
+        } catch (IOException e) {
+            logger.error("Error initiating OAuth flow: " + e.getMessage(), e);
+            throw e;
+        } finally {
+            if (reader != null) {
+                try {
+                    reader.close();
+                } catch (IOException e) {
+                    logger.warn("Error closing reader: " + e.getMessage());
+                }
+            }
+            if (conn != null) {
+                conn.disconnect();
             }
         }
-        
-        // Convert to URL-safe format: replace + with -, / with _, and remove padding
-        String encoded = result.toString();
-        StringBuffer urlSafe = new StringBuffer();
-        for (int i = 0; i < encoded.length(); i++) {
-            char ch = encoded.charAt(i);
-            if (ch == '+') {
-                urlSafe.append('-');
-            } else if (ch == '/') {
-                urlSafe.append('_');
-            } else if (ch != '=') {
-                urlSafe.append(ch);
-            }
-        }
-        
-        return urlSafe.toString();
     }
-    
+
     /**
-     * Checks if the origin is in the allowed list.
+     * Handles the OAuth callback after user authorization.
      */
-    private boolean isAllowedOrigin(String origin) {
-        if (allowedOrigins == null || allowedOrigins.size() == 0) {
-            return false;
+    private void handleOAuthCallback(HttpServletRequest request, HttpServletResponse response, 
+                                     HttpSession session) throws IOException {
+        logger.info("Handling OAuth callback");
+        
+        // Check for error parameter
+        String error = request.getParameter(PARAM_ERROR);
+        if (error != null && error.length() > 0) {
+            logger.error("OAuth error received: " + error);
+            sendErrorResponse(response, "Authentication failed: " + error);
+            return;
         }
         
-        // Allow all origins if wildcard is present
-        for (int i = 0; i < allowedOrigins.size(); i++) {
-            String allowed = allowedOrigins.get(i);
-            if ("*".equals(allowed)) {
-                return true;
+        // Get authorization code and state
+        String code = request.getParameter(PARAM_CODE);
+        String state = request.getParameter(PARAM_STATE);
+        
+        if (code == null || code.length() == 0) {
+            logger.error("Authorization code not received in callback");
+            sendErrorResponse(response, "Invalid callback parameters");
+            return;
+        }
+        
+        // Verify state parameter for CSRF protection
+        String sessionState = (String) session.getAttribute(SESSION_STATE);
+        if (sessionState == null || !sessionState.equals(state)) {
+            logger.error("State parameter mismatch. Expected: " + sessionState + ", Received: " + state);
+            sendErrorResponse(response, "Invalid state parameter");
+            return;
+        }
+        
+        logger.debug("Authorization code received: " + code);
+        logger.debug("State parameter verified successfully");
+        
+        // Validate token with gateway
+        String accessToken = validateTokenWithGateway(code, state);
+        if (accessToken != null && accessToken.length() > 0) {
+            logger.info("Access token received and validated successfully");
+            session.setAttribute(SESSION_ACCESS_TOKEN, accessToken);
+            session.removeAttribute(SESSION_STATE);
+            
+            // Redirect to original requested page or home
+            String redirectUrl = (String) session.getAttribute("original_request_url");
+            if (redirectUrl == null || redirectUrl.length() == 0) {
+                redirectUrl = request.getContextPath() + "/";
+            }
+            logger.info("Redirecting to: " + redirectUrl);
+            response.sendRedirect(redirectUrl);
+        } else {
+            logger.error("Failed to validate token with gateway");
+            sendErrorResponse(response, "Token validation failed");
+        }
+    }
+
+    /**
+     * Validates the authorization code by calling /auth/validate-token endpoint.
+     */
+    private String validateTokenWithGateway(String code, String state) {
+        logger.info("Validating token via /auth/validate-token endpoint");
+        
+        HttpURLConnection conn = null;
+        BufferedReader reader = null;
+        
+        try {
+            // Build request to /auth/validate-token
+            URL url = new URL(gatewayBaseUrl + "/auth/validate-token");
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setConnectTimeout(connectionTimeout);
+            conn.setReadTimeout(readTimeout);
+            conn.setDoOutput(true);
+            
+            // Build request body
+            StringBuilder requestBody = new StringBuilder();
+            requestBody.append("code=").append(URLEncoder.encode(code, "UTF-8"));
+            requestBody.append("&state=").append(URLEncoder.encode(state, "UTF-8"));
+            requestBody.append("&callback_url=").append(URLEncoder.encode(callbackUrl, "UTF-8"));
+            
+            // Send request
+            OutputStream os = conn.getOutputStream();
+            os.write(requestBody.toString().getBytes("UTF-8"));
+            os.flush();
+            os.close();
+            
+            int responseCode = conn.getResponseCode();
+            logger.info("Received response from /auth/validate-token: " + responseCode);
+            
+            if (responseCode == HttpURLConnection.HTTP_OK) {
+                // Read response
+                reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), "UTF-8"));
+                StringBuilder responseBuilder = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    responseBuilder.append(line);
+                }
+                
+                String responseBody = responseBuilder.toString();
+                logger.debug("Response body: " + responseBody);
+                
+                // Extract access token from response
+                String accessToken = extractAccessToken(responseBody);
+                if (accessToken != null && accessToken.length() > 0) {
+                    logger.info("Access token extracted successfully");
+                    return accessToken;
+                } else {
+                    logger.error("Failed to extract access token from response");
+                }
+            } else {
+                logger.error("Token validation failed. Response code: " + responseCode);
+                String errorMsg = readErrorResponse(conn);
+                logger.error("Error response: " + errorMsg);
+            }
+            
+        } catch (IOException e) {
+            logger.error("Error validating token: " + e.getMessage(), e);
+        } finally {
+            if (reader != null) {
+                try {
+                    reader.close();
+                } catch (IOException e) {
+                    logger.warn("Error closing reader: " + e.getMessage());
+                }
+            }
+            if (conn != null) {
+                conn.disconnect();
             }
         }
         
-        // Check if origin is null or empty
-        if (origin == null || origin.length() == 0) {
+        return null;
+    }
+
+    /**
+     * Validates if an access token is still valid.
+     */
+    private boolean validateToken(String accessToken) {
+        logger.debug("Validating existing access token");
+        
+        // Simple validation - in production, you might want to call a token introspection endpoint
+        // For now, we'll assume tokens are valid if they exist
+        // You can enhance this by calling a gateway endpoint to verify token validity
+        
+        if (accessToken == null || accessToken.length() == 0) {
             return false;
         }
         
-        // Check exact match
-        for (int i = 0; i < allowedOrigins.size(); i++) {
-            String allowed = allowedOrigins.get(i);
-            if (origin.equals(allowed)) {
+        // Could implement token expiry check here if token contains expiry information
+        // Or call a gateway endpoint to verify token validity
+        
+        return true;
+    }
+
+    /**
+     * Checks if the given path should be excluded from authentication.
+     */
+    private boolean isExcludedPath(String path) {
+        for (int i = 0; i < excludedPaths.size(); i++) {
+            String excludedPath = (String) excludedPaths.get(i);
+            if (path.startsWith(excludedPath)) {
                 return true;
             }
         }
-        
         return false;
     }
-    
+
     /**
-     * Helper method to parse comma-separated strings into a list.
+     * Generates a random state parameter for CSRF protection.
      * Java 6 compatible implementation.
      */
-    private List<String> parseCommaSeparated(String input) {
-        List<String> result = new ArrayList<String>();
+    private String generateState() {
+        // Simple random string generation (Java 6 compatible)
+        StringBuilder state = new StringBuilder();
+        String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        java.util.Random random = new java.util.Random();
         
-        if (input == null || input.length() == 0) {
-            return result;
+        for (int i = 0; i < 32; i++) {
+            state.append(chars.charAt(random.nextInt(chars.length())));
         }
         
-        // Manual parsing instead of String.split() for better control
-        StringBuffer current = new StringBuffer();
-        for (int i = 0; i < input.length(); i++) {
-            char ch = input.charAt(i);
-            if (ch == ',') {
-                String token = current.toString().trim();
-                if (token.length() > 0) {
-                    result.add(token);
+        return state.toString();
+    }
+
+    /**
+     * Extracts authorization URL from JSON response.
+     * Simple JSON parsing without external libraries (Java 6 compatible).
+     */
+    private String extractAuthorizationUrl(String jsonResponse) {
+        // Simple JSON parsing for "authorization_url" field
+        String key = "\"authorization_url\"";
+        int keyIndex = jsonResponse.indexOf(key);
+        
+        if (keyIndex == -1) {
+            // Try alternative key names
+            key = "\"authorizationUrl\"";
+            keyIndex = jsonResponse.indexOf(key);
+        }
+        
+        if (keyIndex == -1) {
+            key = "\"auth_url\"";
+            keyIndex = jsonResponse.indexOf(key);
+        }
+        
+        if (keyIndex != -1) {
+            int valueStart = jsonResponse.indexOf("\"", keyIndex + key.length());
+            if (valueStart != -1) {
+                int valueEnd = jsonResponse.indexOf("\"", valueStart + 1);
+                if (valueEnd != -1) {
+                    return jsonResponse.substring(valueStart + 1, valueEnd);
                 }
-                current = new StringBuffer();
-            } else {
-                current.append(ch);
             }
         }
         
-        // Add the last token
-        String token = current.toString().trim();
-        if (token.length() > 0) {
-            result.add(token);
+        return null;
+    }
+
+    /**
+     * Extracts access token from JSON response.
+     * Simple JSON parsing without external libraries (Java 6 compatible).
+     */
+    private String extractAccessToken(String jsonResponse) {
+        // Simple JSON parsing for "access_token" field
+        String key = "\"access_token\"";
+        int keyIndex = jsonResponse.indexOf(key);
+        
+        if (keyIndex == -1) {
+            // Try alternative key names
+            key = "\"accessToken\"";
+            keyIndex = jsonResponse.indexOf(key);
         }
         
-        return result;
+        if (keyIndex == -1) {
+            key = "\"token\"";
+            keyIndex = jsonResponse.indexOf(key);
+        }
+        
+        if (keyIndex != -1) {
+            int valueStart = jsonResponse.indexOf("\"", keyIndex + key.length());
+            if (valueStart != -1) {
+                int valueEnd = jsonResponse.indexOf("\"", valueStart + 1);
+                if (valueEnd != -1) {
+                    return jsonResponse.substring(valueStart + 1, valueEnd);
+                }
+            }
+        }
+        
+        return null;
+    }
+
+    /**
+     * Reads error response from failed HTTP connection.
+     */
+    private String readErrorResponse(HttpURLConnection conn) {
+        BufferedReader reader = null;
+        try {
+            reader = new BufferedReader(new InputStreamReader(conn.getErrorStream(), "UTF-8"));
+            StringBuilder errorBuilder = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                errorBuilder.append(line);
+            }
+            return errorBuilder.toString();
+        } catch (Exception e) {
+            logger.warn("Error reading error response: " + e.getMessage());
+            return "";
+        } finally {
+            if (reader != null) {
+                try {
+                    reader.close();
+                } catch (IOException e) {
+                    // Ignore
+                }
+            }
+        }
+    }
+
+    /**
+     * Sends error response to client.
+     */
+    private void sendErrorResponse(HttpServletResponse response, String message) throws IOException {
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        response.setContentType("text/html");
+        response.getWriter().write("<html><body><h1>Authentication Error</h1><p>" + message + "</p></body></html>");
+    }
+
+    /**
+     * Cleanup resources when filter is destroyed.
+     */
+    public void destroy() {
+        logger.info("Destroying GatewayAuthenticationFilter");
+        // Cleanup resources if needed
     }
 }
