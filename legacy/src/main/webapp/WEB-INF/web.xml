@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app xmlns="http://xmlns.jcp.org/xml/ns/javaee"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://xmlns.jcp.org/xml/ns/javaee
+         http://xmlns.jcp.org/xml/ns/javaee/web-app_4_0.xsd"
+         version="4.0">
+
+    <display-name>Legacy Application with Gateway Authentication</display-name>
+    
+    <description>
+        Legacy Java web application integrated with centralized OAuth2 gateway.
+        This configuration includes the GatewayAuthenticationFilter for SSO.
+    </description>
+
+    <!-- Gateway Authentication Filter -->
+    <filter>
+        <filter-name>GatewayAuthenticationFilter</filter-name>
+        <filter-class>com.example.legacyapp.filter.GatewayAuthenticationFilter</filter-class>
+        
+        <!-- Gateway URL - REQUIRED -->
+        <!-- Update this based on your environment -->
+        <init-param>
+            <param-name>gatewayUrl</param-name>
+            <!-- Development -->
+            <param-value>http://localhost:8080</param-value>
+            
+            <!-- QA -->
+            <!-- <param-value>https://gateway-qa.example.com</param-value> -->
+            
+            <!-- Production -->
+            <!-- <param-value>https://gateway.example.com</param-value> -->
+        </init-param>
+        
+        <!-- Excluded Paths - Paths that don't require authentication -->
+        <init-param>
+            <param-name>excludedPaths</param-name>
+            <param-value>/error.html,/logout.jsp,/public,/health,/favicon.ico</param-value>
+        </init-param>
+        
+        <!-- Excluded File Extensions - Static resources that don't require authentication -->
+        <init-param>
+            <param-name>excludedExtensions</param-name>
+            <param-value>.css,.js,.png,.jpg,.jpeg,.gif,.ico,.svg,.woff,.woff2,.ttf,.eot</param-value>
+        </init-param>
+    </filter>
+
+    <!-- Apply filter to all requests -->
+    <filter-mapping>
+        <filter-name>GatewayAuthenticationFilter</filter-name>
+        <url-pattern>/*</url-pattern>
+        <dispatcher>REQUEST</dispatcher>
+        <dispatcher>FORWARD</dispatcher>
+    </filter-mapping>
+
+    <!-- Welcome Files -->
+    <welcome-file-list>
+        <welcome-file>home.jsp</welcome-file>
+        <welcome-file>index.jsp</welcome-file>
+        <welcome-file>index.html</welcome-file>
+    </welcome-file-list>
+
+    <!-- Session Configuration -->
+    <session-config>
+        <!-- Session timeout in minutes (default: 30 minutes) -->
+        <session-timeout>30</session-timeout>
+        <cookie-config>
+            <!-- HttpOnly flag for security -->
+            <http-only>true</http-only>
+            <!-- Secure flag (enable in production with HTTPS) -->
+            <!-- <secure>true</secure> -->
+        </cookie-config>
+    </session-config>
+
+    <!-- Error Pages -->
+    <error-page>
+        <error-code>404</error-code>
+        <location>/error.html</location>
+    </error-page>
+    
+    <error-page>
+        <error-code>500</error-code>
+        <location>/error.html</location>
+    </error-page>
+    
+    <error-page>
+        <exception-type>java.lang.Exception</exception-type>
+        <location>/error.html</location>
+    </error-page>
+
+    <!-- MIME Type Mappings -->
+    <mime-mapping>
+        <extension>css</extension>
+        <mime-type>text/css</mime-type>
+    </mime-mapping>
+    
+    <mime-mapping>
+        <extension>js</extension>
+        <mime-type>application/javascript</mime-type>
+    </mime-mapping>
+    
+    <mime-mapping>
+        <extension>json</extension>
+        <mime-type>application/json</mime-type>
+    </mime-mapping>
+
+</web-app>

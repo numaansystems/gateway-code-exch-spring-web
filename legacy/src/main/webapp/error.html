@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Authentication Error</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .error-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+            text-align: center;
+        }
+        
+        .error-icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 20px;
+            background: #ff4757;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 40px;
+            font-weight: bold;
+        }
+        
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .error-code {
+            color: #7f8c8d;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 20px;
+        }
+        
+        .error-message {
+            color: #34495e;
+            line-height: 1.6;
+            margin-bottom: 30px;
+            font-size: 16px;
+        }
+        
+        .error-details {
+            background: #f8f9fa;
+            border-left: 4px solid #ff4757;
+            padding: 15px;
+            margin: 20px 0;
+            text-align: left;
+            border-radius: 4px;
+        }
+        
+        .error-details strong {
+            color: #2c3e50;
+            display: block;
+            margin-bottom: 5px;
+        }
+        
+        .error-details p {
+            color: #7f8c8d;
+            font-size: 14px;
+            margin: 5px 0;
+        }
+        
+        .actions {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-secondary {
+            background: #95a5a6;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #7f8c8d;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(127, 140, 141, 0.4);
+        }
+        
+        .help-text {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #ecf0f1;
+            color: #7f8c8d;
+            font-size: 14px;
+        }
+        
+        .help-text a {
+            color: #667eea;
+            text-decoration: none;
+        }
+        
+        .help-text a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="error-container">
+        <div class="error-icon">!</div>
+        <h1 id="errorTitle">Authentication Error</h1>
+        <div class="error-code" id="errorCode">ERROR</div>
+        <div class="error-message" id="errorMessage">
+            An error occurred during the authentication process.
+        </div>
+        <div class="error-details" id="errorDetails" style="display: none;">
+            <strong>Error Details:</strong>
+            <p id="errorDetailsText"></p>
+        </div>
+        <div class="actions">
+            <a href="javascript:location.reload()" class="btn btn-primary">Try Again</a>
+            <a href="/" class="btn btn-secondary">Go to Home</a>
+        </div>
+        <div class="help-text">
+            If the problem persists, please contact your system administrator.
+        </div>
+    </div>
+
+    <script>
+        // Parse error parameter from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const errorType = urlParams.get('error');
+        
+        // Error messages
+        const errorMessages = {
+            'auth_loop': {
+                title: 'Authentication Loop Detected',
+                code: 'AUTH_LOOP',
+                message: 'Multiple authentication attempts were detected. This might indicate a configuration issue.',
+                details: 'The system has prevented an infinite redirect loop. Please clear your browser cookies and try again.'
+            },
+            'invalid_token': {
+                title: 'Invalid Token',
+                code: 'INVALID_TOKEN',
+                message: 'The authentication token is invalid or has expired.',
+                details: 'Your session may have expired. Please try logging in again.'
+            },
+            'invalid_state': {
+                title: 'Invalid State Parameter',
+                code: 'INVALID_STATE',
+                message: 'The authentication state parameter is invalid.',
+                details: 'This might be a security issue. Please try logging in again from the beginning.'
+            },
+            'validation_failed': {
+                title: 'Token Validation Failed',
+                code: 'VALIDATION_FAILED',
+                message: 'Failed to validate your authentication token with the gateway.',
+                details: 'There might be a connectivity issue with the authentication server.'
+            },
+            'exception': {
+                title: 'System Error',
+                code: 'EXCEPTION',
+                message: 'An unexpected error occurred during authentication.',
+                details: 'Please try again. If the problem persists, contact your administrator.'
+            },
+            'no_username': {
+                title: 'User Information Missing',
+                code: 'NO_USERNAME',
+                message: 'Could not retrieve user information from the authentication server.',
+                details: 'The user profile might be incomplete or unavailable.'
+            },
+            'token_exchange_failed': {
+                title: 'Token Exchange Failed',
+                code: 'TOKEN_EXCHANGE_FAILED',
+                message: 'Failed to exchange authorization code for access token.',
+                details: 'There was an error communicating with the authentication server.'
+            },
+            'no_access_token': {
+                title: 'No Access Token',
+                code: 'NO_ACCESS_TOKEN',
+                message: 'The authentication server did not provide an access token.',
+                details: 'This might indicate a configuration issue with the authentication server.'
+            },
+            'user_info_failed': {
+                title: 'User Info Retrieval Failed',
+                code: 'USER_INFO_FAILED',
+                message: 'Failed to retrieve user information from the authentication server.',
+                details: 'Please try logging in again.'
+            },
+            'no_code_verifier': {
+                title: 'Missing Code Verifier',
+                code: 'NO_CODE_VERIFIER',
+                message: 'The authentication session is missing required security parameters.',
+                details: 'Please clear your browser cookies and try logging in again.'
+            }
+        };
+        
+        // Display appropriate error message
+        if (errorType && errorMessages[errorType]) {
+            const error = errorMessages[errorType];
+            document.getElementById('errorTitle').textContent = error.title;
+            document.getElementById('errorCode').textContent = error.code;
+            document.getElementById('errorMessage').textContent = error.message;
+            document.getElementById('errorDetailsText').textContent = error.details;
+            document.getElementById('errorDetails').style.display = 'block';
+        } else if (errorType) {
+            // Unknown error type
+            document.getElementById('errorCode').textContent = errorType.toUpperCase();
+            document.getElementById('errorMessage').textContent = 
+                'An unknown error occurred: ' + errorType;
+        }
+    </script>
+</body>
+</html>
