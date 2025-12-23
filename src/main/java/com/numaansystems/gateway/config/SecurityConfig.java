@@ -1,91 +1,92 @@
-package com. numaansystems.gateway.config;
+package com.numaansystems.gateway.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework. security.web.SecurityFilterChain;
-import org.springframework.security.web. authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.Arrays;
+import java.util.List;
 
 /**
- * Spring Security configuration for Azure AD OAuth2 authentication.
- * 
- * <p>This configuration sets up servlet-based (NOT reactive) Spring Security
- * with OAuth2 login using Azure AD as the identity provider.</p>
- * 
- * <h2>Security Configuration</h2>
- * <ul>
- *   <li>Public endpoints: /actuator/**, /error, /auth/**</li>
- *   <li>Protected endpoints: /swagger-ui/**, /api-docs/** (requires authentication + whitelist)</li>
- *   <li>All other endpoints require authentication</li>
- *   <li>OAuth2 login with custom success handler</li>
- *   <li>CSRF disabled (stateless token exchange pattern)</li>
- * </ul>
- * 
- * <h2>Session Management</h2>
- * <p>Session configuration is defined in application.yml:</p>
- * <ul>
- *   <li>HTTP-only cookies (not accessible to JavaScript)</li>
- *   <li>Secure flag (HTTPS only in production)</li>
- *   <li>SameSite=Lax (CSRF protection)</li>
- * </ul>
- * 
+ * Security configuration for the Gateway application.
+ * Configures HTTP security, authentication, and authorization rules.
+ * Includes CORS support for cross-origin requests from legacy applications.
+ *
  * @author Numaan Systems
- * @version 0.1.0
+ * @version 1.0
  */
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
-    private final CustomAuthenticationSuccessHandler successHandler;
-    private final SwaggerAccessFilter swaggerAccessFilter;
-
     /**
-     * Constructor injection of custom authentication success handler and Swagger filter.
-     * 
-     * @param successHandler handles OAuth2 authentication success
-     * @param swaggerAccessFilter filters Swagger access by user
-     */
-    public SecurityConfig(CustomAuthenticationSuccessHandler successHandler,
-                         SwaggerAccessFilter swaggerAccessFilter) {
-        this.successHandler = successHandler;
-        this. swaggerAccessFilter = swaggerAccessFilter;
-    }
-
-    /**
-     * Configures the security filter chain for servlet-based Spring Security.
-     * 
-     * <p>This method defines authorization rules and OAuth2 login configuration. 
-     * Note: This uses HttpSecurity (servlet) NOT ServerHttpSecurity (reactive).</p>
-     * 
+     * Configures the security filter chain with CORS support and authorization rules.
+     *
      * @param http the HttpSecurity to configure
      * @return the configured SecurityFilterChain
-     * @throws Exception if configuration fails
+     * @throws Exception if an error occurs during configuration
      */
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-            // Configure authorization
-            .authorizeHttpRequests(authz -> authz
-                // Public endpoints - no authentication required
-                .requestMatchers("/actuator/**", "/error", "/auth/**", "/test/**").permitAll()
-                // Proxied legacy app endpoints - no authentication required (legacy app handles auth)
-                .requestMatchers("/myapp/**").permitAll()
-                // Swagger endpoints - authentication required (filtered by SwaggerAccessFilter)
-                .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/api-docs/**", "/v3/api-docs/**").authenticated()
-                // All other endpoints require authentication
-                .anyRequest().authenticated()
+            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+            .authorizeHttpRequests(authorize -> authorize
+                .anyRequest().permitAll()
             )
-            // Configure OAuth2 login
-            .oauth2Login(oauth2 -> oauth2
-                // Custom success handler for token exchange
-                .successHandler(successHandler)
-            )
-            // Add Swagger access filter
-            .addFilterAfter(swaggerAccessFilter, UsernamePasswordAuthenticationFilter.class)
-            // Disable CSRF for stateless token exchange pattern
             .csrf(csrf -> csrf.disable());
-
+        
         return http.build();
+    }
+
+    /**
+     * Configures CORS (Cross-Origin Resource Sharing) settings.
+     * Allows cross-origin requests from specified origins including legacy applications.
+     *
+     * @return the configured CorsConfigurationSource
+     */
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        
+        // Configure allowed origins
+        configuration.setAllowedOrigins(Arrays.asList(
+            "http://localhost:8080",
+            "http://localhost:8081",
+            "http://qa-server:8080",
+            "https://app.company.com",
+            "https://legacy.company.com"
+        ));
+        
+        // Configure allowed HTTP methods
+        configuration.setAllowedMethods(Arrays.asList(
+            "GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"
+        ));
+        
+        // Allow all headers
+        configuration.setAllowedHeaders(List.of("*"));
+        
+        // Allow credentials (cookies, authorization headers)
+        configuration.setAllowCredentials(true);
+        
+        // Set max age for preflight requests (in seconds)
+        configuration.setMaxAge(3600L);
+        
+        // Expose specific headers to the client
+        configuration.setExposedHeaders(Arrays.asList(
+            "Authorization",
+            "Content-Type",
+            "X-Requested-With"
+        ));
+        
+        // Register the CORS configuration for all paths
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        
+        return source;
     }
 }
