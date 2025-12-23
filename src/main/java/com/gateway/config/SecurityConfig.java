@@ -1,128 +1,87 @@
-package com.gateway.config;
+package com.numaansystems.gateway.config;
 
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.context.annotation. Bean;
+import org.springframework. context.annotation.Configuration;
+import org.springframework.security.config. annotation.web.builders.HttpSecurity;
+import org.springframework. security.config.annotation.web. configuration.EnableWebSecurity;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
-import org.springframework.security.web.authentication.SimpleUrlAuthenticationSuccessHandler;
+import org.springframework.security.web. authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
-import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.cors. UrlBasedCorsConfigurationSource;
 
 import java.util.Arrays;
-import java.util.List;
 
 /**
- * Security Configuration
- * Configures authentication, authorization, CORS, and OAuth2 login
+ * Spring Security Configuration with CORS and Authentication
+ * 
+ * @version 0.2.0 - Fixed: Restored authentication requirements with CORS support
  */
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
-    /**
-     * Configure Security Filter Chain with authentication requirements
-     */
+    private final CustomAuthenticationSuccessHandler successHandler;
+    private final SwaggerAccessFilter swaggerAccessFilter;
+
+    public SecurityConfig(CustomAuthenticationSuccessHandler successHandler,
+                         SwaggerAccessFilter swaggerAccessFilter) {
+        this.successHandler = successHandler;
+        this. swaggerAccessFilter = swaggerAccessFilter;
+    }
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
+            // Enable CORS
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-            .csrf(csrf -> csrf.disable())
-            .authorizeHttpRequests(authorize -> authorize
-                // Public endpoints - no authentication required
-                .requestMatchers(
-                    "/actuator/**",
-                    "/error",
-                    "/auth/**",
-                    "/test/**",
-                    "/oauth2/**",
-                    "/login/**",
-                    "/myapp/**"
-                ).permitAll()
-                // Swagger/OpenAPI endpoints - accessible for API documentation
-                .requestMatchers(
-                    "/v3/api-docs/**",
-                    "/swagger-ui/**",
-                    "/swagger-ui.html",
-                    "/swagger-resources/**",
-                    "/webjars/**"
-                ).permitAll()
-                // All other endpoints require authentication
+            
+            // Configure authorization - FIXED: Require authentication except for public endpoints
+            .authorizeHttpRequests(authz -> authz
+                // Public endpoints
+                .requestMatchers("/actuator/**", "/error", "/auth/**", "/test/**").permitAll()
+                .requestMatchers("/oauth2/**", "/login/**").permitAll()
+                .requestMatchers("/myapp/**").permitAll()
+                
+                // Protected endpoints
+                .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/api-docs/**", "/v3/api-docs/**").authenticated()
+                
+                // All other requests require authentication
                 .anyRequest().authenticated()
             )
+            
+            // OAuth2 login with custom handler
             .oauth2Login(oauth2 -> oauth2
-                .successHandler(authenticationSuccessHandler())
+                . successHandler(successHandler)
             )
-            .formLogin(form -> form
-                .loginPage("/login")
-                .permitAll()
-            )
-            .logout(logout -> logout
-                .logoutSuccessUrl("/login?logout")
-                .permitAll()
-            );
+            
+            // Swagger access filter
+            .addFilterAfter(swaggerAccessFilter, UsernamePasswordAuthenticationFilter.class)
+            
+            // Disable CSRF
+            .csrf(csrf -> csrf.disable());
 
         return http.build();
     }
 
-    /**
-     * CORS Configuration Bean
-     * Allows cross-origin requests from legacy applications
-     */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        
-        // Allow specific origins (update with your legacy application URLs)
-        configuration.setAllowedOriginPatterns(Arrays.asList("*"));
-        
-        // Allow common HTTP methods
-        configuration.setAllowedMethods(Arrays.asList(
-            "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"
+        configuration.setAllowedOrigins(Arrays.asList(
+            "http://localhost:8080",
+            "http://localhost:8081",
+            "http://qa-server: 8080",
+            "https://app.company.com",
+            "https://legacy. company.com"
         ));
-        
-        // Allow common headers
-        configuration.setAllowedHeaders(Arrays.asList(
-            "Authorization",
-            "Content-Type",
-            "X-Requested-With",
-            "Accept",
-            "Origin",
-            "Access-Control-Request-Method",
-            "Access-Control-Request-Headers"
-        ));
-        
-        // Expose headers that client can access
-        configuration.setExposedHeaders(Arrays.asList(
-            "Access-Control-Allow-Origin",
-            "Access-Control-Allow-Credentials",
-            "Authorization"
-        ));
-        
-        // Allow credentials (cookies, authorization headers)
+        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"));
+        configuration. setAllowedHeaders(Arrays. asList("*"));
         configuration.setAllowCredentials(true);
-        
-        // Cache preflight response for 1 hour
         configuration.setMaxAge(3600L);
+        configuration.setExposedHeaders(Arrays.asList("Authorization", "Content-Type", "X-Requested-With"));
         
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
-        
         return source;
-    }
-
-    /**
-     * Custom OAuth2 Authentication Success Handler
-     * Handles successful OAuth2 login redirects
-     */
-    @Bean
-    public AuthenticationSuccessHandler authenticationSuccessHandler() {
-        SimpleUrlAuthenticationSuccessHandler successHandler = new SimpleUrlAuthenticationSuccessHandler();
-        successHandler.setDefaultTargetUrl("/");
-        successHandler.setAlwaysUseDefaultTargetUrl(false);
-        successHandler.setUseReferer(false);
-        return successHandler;
     }
 }
