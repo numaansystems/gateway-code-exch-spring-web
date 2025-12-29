@@ -113,8 +113,8 @@ public class UserAuthorityServiceImpl implements UserAuthorityService {
         this.dbUrl = dbUrl;
         this.dbUsername = dbUsername;
         this.dbPassword = dbPassword;
-        // Use newer MySQL driver by default (com.mysql.cj.jdbc.Driver)
-        // Falls back to deprecated driver if not specified
+        // Use newer MySQL driver by default
+        // Fallback logic is handled during driver loading (see try-catch block below)
         this.dbDriver = dbDriver != null ? dbDriver : "com.mysql.cj.jdbc.Driver";
         
         // Check if database is configured

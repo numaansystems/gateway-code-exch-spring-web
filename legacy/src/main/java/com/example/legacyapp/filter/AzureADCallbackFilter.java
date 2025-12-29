@@ -349,18 +349,39 @@ public class AzureADCallbackFilter implements Filter {
     
     /**
      * Extract authorities from Azure AD ID token
-     * (simplified - in production would properly decode and validate JWT)
+     * 
+     * KNOWN LIMITATION: This is a simplified implementation that does not decode JWT tokens.
+     * In a production environment, you should:
+     * 1. Add a JWT library (e.g., java-jwt, nimbus-jose-jwt)
+     * 2. Decode the ID token
+     * 3. Validate the signature
+     * 4. Extract the 'roles' claim
+     * 
+     * For now, this returns an empty collection, which means only database authorities
+     * will be loaded. This is sufficient for applications that manage all authorities
+     * in their database.
+     * 
+     * @param idToken the ID token from Azure AD
+     * @return collection of authority strings from Azure AD (currently empty)
      */
     private Collection<String> extractAzureAuthorities(String idToken) {
         if (idToken == null || idToken.length() == 0) {
             return new ArrayList<String>();
         }
         
-        // In a production implementation, you would:
-        // 1. Decode the JWT token
-        // 2. Validate the signature
-        // 3. Extract the 'roles' claim
-        // For now, return empty collection
+        // TODO: Implement JWT decoding and role extraction
+        // This requires adding a JWT library dependency
+        // Example with nimbus-jose-jwt:
+        // try {
+        //     SignedJWT signedJWT = SignedJWT.parse(idToken);
+        //     JWTClaimsSet claims = signedJWT.getJWTClaimsSet();
+        //     List<String> roles = (List<String>) claims.getClaim("roles");
+        //     return roles != null ? roles : new ArrayList<String>();
+        // } catch (Exception e) {
+        //     System.err.println("Failed to parse ID token: " + e.getMessage());
+        //     return new ArrayList<String>();
+        // }
+        
         return new ArrayList<String>();
     }
     

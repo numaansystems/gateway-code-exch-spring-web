@@ -284,9 +284,21 @@ All code is written using Java 6 compatible syntax:
 
 1. **CSRF Protection**: State parameter validates callback requests
 2. **HttpOnly Cookie**: Prevents JavaScript access to authentication cookie
-3. **Secure Cookie**: Should be enabled in production (HTTPS required)
+3. **Secure Cookie**: Currently disabled for development. **IMPORTANT**: Uncomment the `cookie.setSecure(true)` line in `AzureADCallbackFilter.setCookie()` method when deploying to production with HTTPS. The Secure flag ensures the authentication cookie is only transmitted over HTTPS connections.
 4. **Session Security**: Tokens stored in server-side session only
 5. **Database Access**: Uses parameterized queries to prevent SQL injection
+6. **Azure AD Roles**: Current implementation does not extract roles from Azure AD ID tokens (see Known Limitations below)
+
+## Known Limitations
+
+1. **JWT Token Parsing**: The `extractAzureAuthorities()` method in `AzureADCallbackFilter` does not decode JWT tokens. This means Azure AD roles are not extracted from the ID token. To implement this:
+   - Add a JWT library dependency (e.g., nimbus-jose-jwt, java-jwt)
+   - Decode and validate the ID token
+   - Extract the 'roles' claim
+   
+2. **Secure Cookie Flag**: The Secure flag is disabled by default for development environments. You must manually enable it in production by uncommenting the line in the code.
+
+3. **Token Refresh**: The current implementation does not use refresh tokens to renew expired access tokens. When tokens expire, users must re-authenticate.
 
 ## Troubleshooting
 
@@ -313,10 +325,11 @@ All code is written using Java 6 compatible syntax:
 
 ## Future Enhancements
 
-1. Proper JWT token validation (decode and verify signature)
-2. Extract roles from Azure AD ID token claims
-3. Token refresh logic using refresh token
-4. Logout functionality (clear session and cookie)
-5. Connection pooling for database access
-6. Caching of database authorities
-7. Admin interface for managing authorities
+1. **JWT Token Support**: Add JWT library to decode and validate ID tokens, extract Azure AD roles
+2. **Configurable Secure Flag**: Add init parameter to control Secure cookie flag for dev/prod environments
+3. **Token Refresh**: Implement automatic token refresh using refresh tokens
+4. **Logout Functionality**: Add logout endpoint to clear session and cookies
+5. **Connection Pooling**: Use connection pool (e.g., HikariCP) for database access
+6. **Authority Caching**: Cache database authorities to reduce database queries
+7. **Admin Interface**: Build UI for managing user authorities
+8. **Health Check**: Add health check endpoint for monitoring
