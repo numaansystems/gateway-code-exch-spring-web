@@ -109,11 +109,6 @@ Add both filters to your `web.xml`:
     </init-param>
     
     <init-param>
-        <param-name>azureAd.clientSecret</param-name>
-        <param-value>your-client-secret</param-value>
-    </init-param>
-    
-    <init-param>
         <param-name>azureAd.tenantId</param-name>
         <param-value>your-tenant-id</param-value>
     </init-param>
@@ -186,7 +181,7 @@ Configure database connection via environment variables:
 - `DB_URL` - JDBC connection URL (e.g., `jdbc:mysql://localhost:3306/legacy_db`)
 - `DB_USERNAME` - Database username
 - `DB_PASSWORD` - Database password
-- `DB_DRIVER` - JDBC driver class (default: `com.mysql.jdbc.Driver`)
+- `DB_DRIVER` - JDBC driver class (default: `com.mysql.cj.jdbc.Driver` for MySQL 8+, with fallback to deprecated `com.mysql.jdbc.Driver`)
 
 ### Database Schema
 
