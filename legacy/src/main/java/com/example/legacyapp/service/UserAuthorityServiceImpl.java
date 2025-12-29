@@ -7,7 +7,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 
 /**
  * Implementation of UserAuthorityService using JDBC for database access.
@@ -151,12 +150,12 @@ public class UserAuthorityServiceImpl implements UserAuthorityService {
         if (!configured) {
             System.out.println("UserAuthorityService: Database not configured, " +
                              "returning empty authorities for user: " + username);
-            return Collections.emptyList();
+            return new ArrayList<String>();
         }
         
         if (username == null || username.length() == 0) {
             System.out.println("UserAuthorityService: Username is null or empty");
-            return Collections.emptyList();
+            return new ArrayList<String>();
         }
         
         System.out.println("UserAuthorityService: Loading authorities for user: " + username);
@@ -189,7 +188,7 @@ public class UserAuthorityServiceImpl implements UserAuthorityService {
             System.err.println("UserAuthorityService: Failed to load authorities for user " + 
                              username + ": " + e.getMessage());
             e.printStackTrace();
-            return Collections.emptyList();
+            return new ArrayList<String>();
         } finally {
             // Close resources in reverse order (Java 6 style)
             if (rs != null) {

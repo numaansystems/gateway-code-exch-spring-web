@@ -353,7 +353,7 @@ public class AzureADCallbackFilter implements Filter {
      */
     private Collection<String> extractAzureAuthorities(String idToken) {
         if (idToken == null || idToken.length() == 0) {
-            return Collections.emptyList();
+            return new ArrayList<String>();
         }
         
         // In a production implementation, you would:
@@ -361,7 +361,7 @@ public class AzureADCallbackFilter implements Filter {
         // 2. Validate the signature
         // 3. Extract the 'roles' claim
         // For now, return empty collection
-        return Collections.emptyList();
+        return new ArrayList<String>();
     }
     
     /**
@@ -515,14 +515,5 @@ public class AzureADCallbackFilter implements Filter {
                    .replace(">", "&gt;")
                    .replace("\"", "&quot;")
                    .replace("'", "&#39;");
-    }
-    
-    /**
-     * Helper class for empty collections (Java 6 compatibility)
-     */
-    private static class Collections {
-        public static <T> Collection<T> emptyList() {
-            return new ArrayList<T>();
-        }
     }
 }
