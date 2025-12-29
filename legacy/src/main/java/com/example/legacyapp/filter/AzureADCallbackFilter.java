@@ -372,7 +372,9 @@ public class AzureADCallbackFilter implements Filter {
         cookie.setPath("/");
         cookie.setMaxAge(maxAge);
         cookie.setHttpOnly(true);
-        // Note: Secure flag should be set to true in production with HTTPS
+        // TODO: Enable Secure flag in production with HTTPS
+        // The Secure flag ensures cookie is only sent over HTTPS connections
+        // Uncomment the following line when deploying to production with HTTPS:
         // cookie.setSecure(true);
         response.addCookie(cookie);
         System.out.println("AzureADCallbackFilter: Set cookie: " + name);

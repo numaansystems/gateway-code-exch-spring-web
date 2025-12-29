@@ -67,7 +67,7 @@ import java.util.Collection;
  *   <li>DB_URL - JDBC connection URL (e.g., jdbc:mysql://localhost:3306/legacy_db)</li>
  *   <li>DB_USERNAME - Database username</li>
  *   <li>DB_PASSWORD - Database password</li>
- *   <li>DB_DRIVER - JDBC driver class (default: com.mysql.jdbc.Driver)</li>
+ *   <li>DB_DRIVER - JDBC driver class (default: com.mysql.cj.jdbc.Driver for MySQL 8+)</li>
  * </ul>
  * 
  * @author Legacy App Integration
@@ -113,7 +113,9 @@ public class UserAuthorityServiceImpl implements UserAuthorityService {
         this.dbUrl = dbUrl;
         this.dbUsername = dbUsername;
         this.dbPassword = dbPassword;
-        this.dbDriver = dbDriver != null ? dbDriver : "com.mysql.jdbc.Driver";
+        // Use newer MySQL driver by default (com.mysql.cj.jdbc.Driver)
+        // Falls back to deprecated driver if not specified
+        this.dbDriver = dbDriver != null ? dbDriver : "com.mysql.cj.jdbc.Driver";
         
         // Check if database is configured
         this.configured = (dbUrl != null && dbUrl.length() > 0 &&
@@ -127,7 +129,15 @@ public class UserAuthorityServiceImpl implements UserAuthorityService {
                 System.out.println("UserAuthorityService: Database configured - " + dbUrl);
             } catch (ClassNotFoundException e) {
                 System.err.println("UserAuthorityService: JDBC driver not found: " + this.dbDriver);
-                configured = false;
+                System.err.println("UserAuthorityService: Trying deprecated driver com.mysql.jdbc.Driver");
+                try {
+                    Class.forName("com.mysql.jdbc.Driver");
+                    this.dbDriver = "com.mysql.jdbc.Driver";
+                    System.out.println("UserAuthorityService: Using deprecated driver - " + this.dbDriver);
+                } catch (ClassNotFoundException e2) {
+                    System.err.println("UserAuthorityService: No JDBC driver found, disabling database lookup");
+                    configured = false;
+                }
             }
         } else {
             System.out.println("UserAuthorityService: Database not configured - " +

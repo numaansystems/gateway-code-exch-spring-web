@@ -20,12 +20,11 @@ import javax.servlet.http.HttpSession;
  * Azure AD OAuth2 Filter - Java 6 Compatible
  * 
  * Direct Azure AD OAuth2 integration filter for Spring Framework 3
- * Handles authorization code flow, token exchange, and user authentication
- * without requiring a gateway intermediary.
+ * Checks if user is authenticated and initiates OAuth2 authorization flow.
+ * The actual callback handling is done by AzureADCallbackFilter.
  * 
  * Configuration required in web.xml or Spring configuration:
  * - azureAd.clientId
- * - azureAd.clientSecret
  * - azureAd.tenantId
  * - azureAd.redirectUri
  * - azureAd.scope (optional, defaults to "openid profile email")
