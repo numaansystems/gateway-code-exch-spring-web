@@ -114,6 +114,9 @@ public class LogoutServlet extends HttpServlet {
         cookie.setPath("/");
         cookie.setMaxAge(0); // Delete immediately
         cookie.setHttpOnly(true);
+        // Note: Secure flag not set for cookie deletion to ensure it works in both HTTP and HTTPS
+        // Since we're deleting the cookie (maxAge=0), security is less critical here
+        // For setting cookies, the Secure flag should be enabled in production (see AzureADCallbackFilter)
         response.addCookie(cookie);
         System.out.println("LogoutServlet: Cleared cookie: " + name);
     }
