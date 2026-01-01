@@ -3,6 +3,8 @@ package com.example.legacyapp.util;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
@@ -11,8 +13,8 @@ import java.security.SecureRandom;
  * Utility class for signing and verifying cookies using HMAC-SHA256.
  * Java 6 compatible implementation without external dependencies.
  * 
- * <p>Cookie values are signed to prevent tampering. The signed cookie
- * format is: {value}:{signature}</p>
+ * <p>Cookie values are URL-encoded and signed to prevent tampering. 
+ * The signed cookie format is: {urlEncodedValue}:{signature}</p>
  * 
  * <p>Configuration via system property: cookie.secret.key</p>
  * If not configured, a random key is generated at startup (with warning).
@@ -25,6 +27,7 @@ public class CookieSigningUtil {
     private static final String HMAC_ALGORITHM = "HmacSHA256";
     private static final String SEPARATOR = ":";
     private static final String SECRET_KEY_PROPERTY = "cookie.secret.key";
+    private static final String ENCODING = "UTF-8";
     
     private static String secretKey;
     private static boolean keyConfigured = false;
@@ -49,7 +52,7 @@ public class CookieSigningUtil {
      * Sign a cookie value using HMAC-SHA256.
      * 
      * @param value the value to sign
-     * @return signed value in format: {value}:{signature}
+     * @return signed value in format: {urlEncodedValue}:{signature}
      */
     public static String signCookie(String value) {
         if (value == null || value.length() == 0) {
@@ -57,8 +60,10 @@ public class CookieSigningUtil {
         }
         
         try {
-            String signature = calculateHmac(value);
-            return value + SEPARATOR + signature;
+            // URL-encode the value to prevent separator conflicts
+            String encodedValue = URLEncoder.encode(value, ENCODING);
+            String signature = calculateHmac(encodedValue);
+            return encodedValue + SEPARATOR + signature;
         } catch (Exception e) {
             System.err.println("CookieSigningUtil: Failed to sign cookie: " + e.getMessage());
             throw new RuntimeException("Failed to sign cookie", e);
@@ -68,31 +73,32 @@ public class CookieSigningUtil {
     /**
      * Verify and extract the original value from a signed cookie.
      * 
-     * @param signedValue the signed cookie value in format: {value}:{signature}
-     * @return the original value if signature is valid, null otherwise
+     * @param signedValue the signed cookie value in format: {urlEncodedValue}:{signature}
+     * @return the original decoded value if signature is valid, null otherwise
      */
     public static String verifyAndExtractCookie(String signedValue) {
         if (signedValue == null || signedValue.length() == 0) {
             return null;
         }
         
-        // Split signed value into value and signature
+        // Split signed value into encoded value and signature
         int separatorIndex = signedValue.lastIndexOf(SEPARATOR);
         if (separatorIndex < 0) {
             System.err.println("CookieSigningUtil: Invalid signed cookie format (missing separator)");
             return null;
         }
         
-        String value = signedValue.substring(0, separatorIndex);
+        String encodedValue = signedValue.substring(0, separatorIndex);
         String providedSignature = signedValue.substring(separatorIndex + 1);
         
         try {
             // Calculate expected signature
-            String expectedSignature = calculateHmac(value);
+            String expectedSignature = calculateHmac(encodedValue);
             
             // Compare signatures (timing-safe comparison)
             if (secureEquals(expectedSignature, providedSignature)) {
-                return value;
+                // Decode the value before returning
+                return URLDecoder.decode(encodedValue, ENCODING);
             } else {
                 System.err.println("CookieSigningUtil: Cookie signature verification failed");
                 return null;
@@ -110,10 +116,10 @@ public class CookieSigningUtil {
             throws NoSuchAlgorithmException, InvalidKeyException, UnsupportedEncodingException {
         
         Mac mac = Mac.getInstance(HMAC_ALGORITHM);
-        SecretKeySpec keySpec = new SecretKeySpec(secretKey.getBytes("UTF-8"), HMAC_ALGORITHM);
+        SecretKeySpec keySpec = new SecretKeySpec(secretKey.getBytes(ENCODING), HMAC_ALGORITHM);
         mac.init(keySpec);
         
-        byte[] rawHmac = mac.doFinal(value.getBytes("UTF-8"));
+        byte[] rawHmac = mac.doFinal(value.getBytes(ENCODING));
         return bytesToHex(rawHmac);
     }
     

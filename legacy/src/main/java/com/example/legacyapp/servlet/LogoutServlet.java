@@ -51,6 +51,11 @@ public class LogoutServlet extends HttpServlet {
             throw new ServletException("Missing required Azure AD configuration parameter: azureAd.tenantId");
         }
         
+        // Validate tenant ID format (UUID or domain)
+        if (!isValidTenantId(tenantId)) {
+            throw new ServletException("Invalid Azure AD tenant ID format: " + tenantId);
+        }
+        
         // Construct Azure AD logout endpoint
         logoutEndpoint = String.format(
             "https://login.microsoftonline.com/%s/oauth2/v2.0/logout", tenantId);
@@ -173,5 +178,26 @@ public class LogoutServlet extends HttpServlet {
         } catch (UnsupportedEncodingException e) {
             throw new RuntimeException("UTF-8 encoding not supported", e);
         }
+    }
+    
+    /**
+     * Validate tenant ID format (UUID or domain name)
+     */
+    private boolean isValidTenantId(String tenantId) {
+        if (tenantId == null || tenantId.length() == 0) {
+            return false;
+        }
+        
+        // Check for UUID format (8-4-4-4-12 hex digits)
+        if (tenantId.matches("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")) {
+            return true;
+        }
+        
+        // Check for domain name format (common, organizations, consumers, or custom domain)
+        if (tenantId.matches("^[a-zA-Z0-9][a-zA-Z0-9-\\.]*[a-zA-Z0-9]$")) {
+            return true;
+        }
+        
+        return false;
     }
 }
