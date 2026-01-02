@@ -2,6 +2,7 @@ package com.example.legacyapp.filter;
 
 import com.example.legacyapp.service.UserAuthorityService;
 import com.example.legacyapp.service.UserAuthorityServiceImpl;
+import com.example.legacyapp.util.CookieSigningUtil;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
@@ -88,6 +89,7 @@ public class AzureADCallbackFilter implements Filter {
     // Cookie configuration
     private static final String AUTH_COOKIE_NAME = "LEGACY_AUTH";
     private static final String AUTH_COOKIE_VALUE = "true";
+    private static final String USER_PRINCIPAL_COOKIE_NAME = "LEGACY_USER_PRINCIPAL";
     private static final int AUTH_COOKIE_MAX_AGE = 1800; // 30 minutes
     
     /**
@@ -213,6 +215,28 @@ public class AzureADCallbackFilter implements Filter {
             String username = extractUsername(userInfo);
             System.out.println("AzureADCallbackFilter: Authenticated user: " + username);
             
+            // Check if user exists in database
+            if (userAuthorityService != null) {
+                try {
+                    Collection<String> dbAuthorities = 
+                        userAuthorityService.loadAuthoritiesByUsername(username);
+                    
+                    // If no authorities found, user doesn't exist in database
+                    if (dbAuthorities == null || dbAuthorities.size() == 0) {
+                        System.err.println("AzureADCallbackFilter: User not found in database: " + username);
+                        redirectToUnauthorized(request, response);
+                        return;
+                    }
+                } catch (Exception e) {
+                    System.err.println("AzureADCallbackFilter: Error checking user in database: " + 
+                                     e.getMessage());
+                    e.printStackTrace();
+                    // If database check fails, redirect to unauthorized
+                    redirectToUnauthorized(request, response);
+                    return;
+                }
+            }
+            
             // Load and merge authorities
             Collection<String> mergedAuthorities = loadAndMergeAuthorities(username, idToken);
             session.setAttribute(SESSION_AUTHORITIES_KEY, mergedAuthorities);
@@ -220,8 +244,12 @@ public class AzureADCallbackFilter implements Filter {
             System.out.println("AzureADCallbackFilter: Stored " + mergedAuthorities.size() + 
                              " authorities in session");
             
-            // Set authentication cookie
+            // Set authentication cookies
             setCookie(response, AUTH_COOKIE_NAME, AUTH_COOKIE_VALUE, AUTH_COOKIE_MAX_AGE);
+            
+            // Create signed user principal cookie
+            String signedPrincipal = CookieSigningUtil.signCookie(username);
+            setCookie(response, USER_PRINCIPAL_COOKIE_NAME, signedPrincipal, AUTH_COOKIE_MAX_AGE);
             
             System.out.println("AzureADCallbackFilter: Authentication successful, redirecting to home");
             
@@ -538,5 +566,17 @@ public class AzureADCallbackFilter implements Filter {
                    .replace(">", "&gt;")
                    .replace("\"", "&quot;")
                    .replace("'", "&#39;");
+    }
+    
+    /**
+     * Redirect to unauthorized error page
+     */
+    private void redirectToUnauthorized(HttpServletRequest request, 
+                                       HttpServletResponse response) throws IOException {
+        String contextPath = request.getContextPath();
+        String unauthorizedUrl = (contextPath != null && contextPath.length() > 0) 
+            ? contextPath + "/unauthorized" 
+            : "/unauthorized";
+        response.sendRedirect(unauthorizedUrl);
     }
 }

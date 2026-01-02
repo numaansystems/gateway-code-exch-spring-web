@@ -5,52 +5,122 @@
          http://xmlns.jcp.org/xml/ns/javaee/web-app_4_0.xsd"
          version="4.0">
 
-    <display-name>Legacy Application with Gateway Authentication</display-name>
+    <display-name>Legacy Application with Azure AD Authentication</display-name>
     
     <description>
-        Legacy Java web application integrated with centralized OAuth2 gateway.
-        This configuration includes the GatewayAuthenticationFilter for SSO.
+        Legacy Java web application integrated with Azure AD OAuth2.
+        Supports cookie-based session management with user principal storage.
     </description>
 
-    <!-- Gateway Authentication Filter -->
+    <!-- Azure AD Callback Filter -->
     <filter>
-        <filter-name>GatewayAuthenticationFilter</filter-name>
-        <filter-class>com.example.legacyapp.filter.GatewayAuthenticationFilter</filter-class>
+        <filter-name>azureADCallbackFilter</filter-name>
+        <filter-class>com.example.legacyapp.filter.AzureADCallbackFilter</filter-class>
         
-        <!-- Gateway URL - REQUIRED -->
-        <!-- Update this based on your environment -->
+        <!-- Azure AD Configuration -->
         <init-param>
-            <param-name>gatewayUrl</param-name>
-            <!-- Development -->
-            <param-value>http://localhost:8080</param-value>
-            
-            <!-- QA -->
-            <!-- <param-value>https://gateway-qa.example.com</param-value> -->
-            
-            <!-- Production -->
-            <!-- <param-value>https://gateway.example.com</param-value> -->
+            <param-name>azureAd.clientId</param-name>
+            <param-value>${AZURE_CLIENT_ID}</param-value>
         </init-param>
         
-        <!-- Excluded Paths - Paths that don't require authentication -->
         <init-param>
-            <param-name>excludedPaths</param-name>
-            <param-value>/error.html,/logout.jsp,/public,/health,/favicon.ico</param-value>
+            <param-name>azureAd.clientSecret</param-name>
+            <param-value>${AZURE_CLIENT_SECRET}</param-value>
         </init-param>
         
-        <!-- Excluded File Extensions - Static resources that don't require authentication -->
         <init-param>
-            <param-name>excludedExtensions</param-name>
-            <param-value>.css,.js,.png,.jpg,.jpeg,.gif,.ico,.svg,.woff,.woff2,.ttf,.eot</param-value>
+            <param-name>azureAd.tenantId</param-name>
+            <param-value>${AZURE_TENANT_ID}</param-value>
+        </init-param>
+        
+        <init-param>
+            <param-name>azureAd.redirectUri</param-name>
+            <param-value>${AZURE_REDIRECT_URI}</param-value>
+        </init-param>
+        
+        <init-param>
+            <param-name>azureAd.scope</param-name>
+            <param-value>openid profile email</param-value>
         </init-param>
     </filter>
-
-    <!-- Apply filter to all requests -->
+    
     <filter-mapping>
-        <filter-name>GatewayAuthenticationFilter</filter-name>
+        <filter-name>azureADCallbackFilter</filter-name>
+        <url-pattern>/login/oauth2/code/azure</url-pattern>
+    </filter-mapping>
+
+    <!-- Authorization Filter - runs on all requests -->
+    <filter>
+        <filter-name>authorizationFilter</filter-name>
+        <filter-class>com.example.legacyapp.filter.AuthorizationFilter</filter-class>
+        
+        <!-- Excluded paths that don't require authentication -->
+        <init-param>
+            <param-name>excludedPaths</param-name>
+            <param-value>/login/*,/logout,/error,/error.html,/unauthorized,/unauthorized.html,/public/*,/health,/favicon.ico</param-value>
+        </init-param>
+    </filter>
+    
+    <filter-mapping>
+        <filter-name>authorizationFilter</filter-name>
         <url-pattern>/*</url-pattern>
         <dispatcher>REQUEST</dispatcher>
-        <dispatcher>FORWARD</dispatcher>
     </filter-mapping>
+
+    <!-- Login Servlet -->
+    <servlet>
+        <servlet-name>loginServlet</servlet-name>
+        <servlet-class>com.example.legacyapp.servlet.LoginServlet</servlet-class>
+        
+        <!-- Azure AD Configuration -->
+        <init-param>
+            <param-name>azureAd.clientId</param-name>
+            <param-value>${AZURE_CLIENT_ID}</param-value>
+        </init-param>
+        
+        <init-param>
+            <param-name>azureAd.tenantId</param-name>
+            <param-value>${AZURE_TENANT_ID}</param-value>
+        </init-param>
+        
+        <init-param>
+            <param-name>azureAd.redirectUri</param-name>
+            <param-value>${AZURE_REDIRECT_URI}</param-value>
+        </init-param>
+        
+        <init-param>
+            <param-name>azureAd.scope</param-name>
+            <param-value>openid profile email</param-value>
+        </init-param>
+    </servlet>
+    
+    <servlet-mapping>
+        <servlet-name>loginServlet</servlet-name>
+        <url-pattern>/login/oauth2/azure</url-pattern>
+    </servlet-mapping>
+
+    <!-- Logout Servlet -->
+    <servlet>
+        <servlet-name>logoutServlet</servlet-name>
+        <servlet-class>com.example.legacyapp.servlet.LogoutServlet</servlet-class>
+        
+        <!-- Azure AD Configuration -->
+        <init-param>
+            <param-name>azureAd.tenantId</param-name>
+            <param-value>${AZURE_TENANT_ID}</param-value>
+        </init-param>
+        
+        <!-- Post-logout redirect URI (optional) -->
+        <init-param>
+            <param-name>azureAd.postLogoutRedirectUri</param-name>
+            <param-value>/</param-value>
+        </init-param>
+    </servlet>
+    
+    <servlet-mapping>
+        <servlet-name>logoutServlet</servlet-name>
+        <url-pattern>/logout</url-pattern>
+    </servlet-mapping>
 
     <!-- Welcome Files -->
     <welcome-file-list>
@@ -61,7 +131,7 @@
 
     <!-- Session Configuration -->
     <session-config>
-        <!-- Session timeout in minutes (default: 30 minutes) -->
+        <!-- Session timeout: 30 minutes -->
         <session-timeout>30</session-timeout>
         <cookie-config>
             <!-- HttpOnly flag for security -->
@@ -72,6 +142,16 @@
     </session-config>
 
     <!-- Error Pages -->
+    <error-page>
+        <error-code>401</error-code>
+        <location>/unauthorized.html</location>
+    </error-page>
+    
+    <error-page>
+        <error-code>403</error-code>
+        <location>/unauthorized.html</location>
+    </error-page>
+    
     <error-page>
         <error-code>404</error-code>
         <location>/error.html</location>
