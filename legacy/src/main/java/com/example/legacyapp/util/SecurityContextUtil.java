@@ -24,6 +24,11 @@ import java.util.List;
  */
 public class SecurityContextUtil {
     
+    // Session attribute keys - must match AzureADCallbackFilter and AuthorizationFilter
+    private static final String SESSION_AUTHENTICATED_KEY = "authenticated";
+    private static final String SESSION_USER_PRINCIPAL_KEY = "userPrincipal";
+    private static final String SESSION_AUTHORITIES_KEY = "oauth2_authorities";
+    
     /**
      * Populate SecurityContextHolder from HttpSession attributes.
      * 
@@ -33,20 +38,21 @@ public class SecurityContextUtil {
      * 
      * @param session the HTTP session containing authentication state
      */
+    @SuppressWarnings("unchecked")
     public static void populateSecurityContext(HttpSession session) {
         if (session == null) {
             SecurityContextHolder.clearContext();
             return;
         }
         
-        Boolean authenticated = (Boolean) session.getAttribute("authenticated");
+        Boolean authenticated = (Boolean) session.getAttribute(SESSION_AUTHENTICATED_KEY);
         if (authenticated == null || !authenticated) {
             SecurityContextHolder.clearContext();
             return;
         }
         
-        String userPrincipal = (String) session.getAttribute("userPrincipal");
-        Collection authStrings = (Collection) session.getAttribute("authorities");
+        String userPrincipal = (String) session.getAttribute(SESSION_USER_PRINCIPAL_KEY);
+        Collection authStrings = (Collection) session.getAttribute(SESSION_AUTHORITIES_KEY);
         
         if (userPrincipal == null) {
             SecurityContextHolder.clearContext();

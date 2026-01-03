@@ -76,6 +76,8 @@ public class AzureADCallbackFilter implements Filter {
     private static final String SESSION_USER_INFO_KEY = "oauth2_user_info";
     private static final String SESSION_AUTHORITIES_KEY = "oauth2_authorities";
     private static final String SESSION_TOKEN_EXPIRY_KEY = "oauth2_token_expiry";
+    private static final String SESSION_AUTHENTICATED_KEY = "authenticated";
+    private static final String SESSION_USER_PRINCIPAL_KEY = "userPrincipal";
     
     // Request parameter keys
     private static final String PARAM_CODE = "code";
@@ -236,8 +238,8 @@ public class AzureADCallbackFilter implements Filter {
                              " authorities in session");
             
             // Store authentication state in session
-            session.setAttribute("authenticated", Boolean.TRUE);
-            session.setAttribute("userPrincipal", username);
+            session.setAttribute(SESSION_AUTHENTICATED_KEY, Boolean.TRUE);
+            session.setAttribute(SESSION_USER_PRINCIPAL_KEY, username);
             
             System.out.println("AzureADCallbackFilter: Authentication successful, redirecting to home");
             

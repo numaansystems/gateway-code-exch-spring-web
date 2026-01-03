@@ -37,6 +37,13 @@ public class AuthorizationFilter implements Filter {
     private Set<String> excludedPaths;
     private UserAuthorityService userAuthorityService;
     
+    // Session attribute keys - must match AzureADCallbackFilter
+    private static final String SESSION_AUTHENTICATED_KEY = "authenticated";
+    private static final String SESSION_USER_PRINCIPAL_KEY = "userPrincipal";
+    private static final String SESSION_AUTHORITIES_KEY = "oauth2_authorities";
+    private static final String SESSION_USER_INFO_KEY = "oauth2_user_info";
+    
+    // Request attribute keys
     private static final String REQUEST_USER_PRINCIPAL_KEY = "userPrincipal";
     private static final String REQUEST_AUTHORITIES_KEY = "authorities";
     
@@ -69,6 +76,7 @@ public class AuthorizationFilter implements Filter {
     /**
      * Main filter logic - validates HttpSession
      */
+    @SuppressWarnings("unchecked")
     public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
             throws IOException, ServletException {
         
@@ -99,14 +107,14 @@ public class AuthorizationFilter implements Filter {
             return;
         }
         
-        Boolean authenticated = (Boolean) session.getAttribute("authenticated");
+        Boolean authenticated = (Boolean) session.getAttribute(SESSION_AUTHENTICATED_KEY);
         if (authenticated == null || !authenticated) {
             System.out.println("AuthorizationFilter: Session not authenticated, redirecting to login");
             redirectToLogin(httpRequest, httpResponse);
             return;
         }
         
-        String userPrincipal = (String) session.getAttribute("userPrincipal");
+        String userPrincipal = (String) session.getAttribute(SESSION_USER_PRINCIPAL_KEY);
         if (userPrincipal == null || userPrincipal.length() == 0) {
             System.err.println("AuthorizationFilter: No user principal in session, redirecting to login");
             redirectToLogin(httpRequest, httpResponse);
@@ -116,8 +124,8 @@ public class AuthorizationFilter implements Filter {
         System.out.println("AuthorizationFilter: Valid session for user: " + userPrincipal);
         
         // Get authorities from session
-        Collection authorities = (Collection) session.getAttribute("oauth2_authorities");
-        Map userInfo = (Map) session.getAttribute("oauth2_user_info");
+        Collection authorities = (Collection) session.getAttribute(SESSION_AUTHORITIES_KEY);
+        Map userInfo = (Map) session.getAttribute(SESSION_USER_INFO_KEY);
         
         if (authorities == null) {
             authorities = new ArrayList<String>();
