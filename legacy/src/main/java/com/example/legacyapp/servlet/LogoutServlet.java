@@ -1,10 +1,10 @@
 package com.example.legacyapp.servlet;
 
 import com.example.legacyapp.util.AzureAdUtil;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
-import javax.servlet.http.Cookie;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -17,7 +17,7 @@ import java.net.URLEncoder;
  * Servlet to handle user logout.
  * Java 6 compatible implementation.
  * 
- * <p>Clears all cookies, invalidates the HTTP session, and redirects
+ * <p>Invalidates the HTTP session, clears SecurityContextHolder, and redirects
  * to Azure AD logout endpoint with post_logout_redirect_uri parameter.</p>
  * 
  * @author Legacy App Integration
@@ -29,9 +29,6 @@ public class LogoutServlet extends HttpServlet {
     private String postLogoutRedirectUri;
     
     private String logoutEndpoint;
-    
-    private static final String AUTH_COOKIE_NAME = "LEGACY_AUTH";
-    private static final String USER_PRINCIPAL_COOKIE_NAME = "LEGACY_USER_PRINCIPAL";
     
     /**
      * Initialize servlet with configuration parameters
@@ -80,9 +77,9 @@ public class LogoutServlet extends HttpServlet {
             session.invalidate();
         }
         
-        // Clear all authentication cookies
-        clearCookie(response, AUTH_COOKIE_NAME);
-        clearCookie(response, USER_PRINCIPAL_COOKIE_NAME);
+        // Clear SecurityContextHolder
+        SecurityContextHolder.clearContext();
+        System.out.println("LogoutServlet: Cleared SecurityContextHolder");
         
         // Build full post-logout redirect URI
         String fullPostLogoutUri = buildFullRedirectUri(request);
@@ -104,21 +101,6 @@ public class LogoutServlet extends HttpServlet {
     protected void doPost(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
         doGet(request, response);
-    }
-    
-    /**
-     * Clear a cookie by setting its max age to 0
-     */
-    private void clearCookie(HttpServletResponse response, String name) {
-        Cookie cookie = new Cookie(name, "");
-        cookie.setPath("/");
-        cookie.setMaxAge(0); // Delete immediately
-        cookie.setHttpOnly(true);
-        // Note: Secure flag not set for cookie deletion to ensure it works in both HTTP and HTTPS
-        // Since we're deleting the cookie (maxAge=0), security is less critical here
-        // For setting cookies, the Secure flag should be enabled in production (see AzureADCallbackFilter)
-        response.addCookie(cookie);
-        System.out.println("LogoutServlet: Cleared cookie: " + name);
     }
     
     /**

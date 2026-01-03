@@ -2,7 +2,7 @@ package com.example.legacyapp.filter;
 
 import com.example.legacyapp.service.UserAuthorityService;
 import com.example.legacyapp.service.UserAuthorityServiceImpl;
-import com.example.legacyapp.util.CookieSigningUtil;
+import com.example.legacyapp.util.SecurityContextUtil;
 
 import javax.servlet.Filter;
 import javax.servlet.FilterChain;
@@ -10,23 +10,24 @@ import javax.servlet.FilterConfig;
 import javax.servlet.ServletException;
 import javax.servlet.ServletRequest;
 import javax.servlet.ServletResponse;
-import javax.servlet.http.Cookie;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 /**
- * Authorization filter that validates user principal cookie on every request.
+ * Authorization filter that validates HttpSession on every request.
  * Java 6 compatible implementation.
  * 
- * <p>This filter checks for the LEGACY_USER_PRINCIPAL cookie on all requests
- * except excluded paths. If the cookie is missing or invalid, redirects to
- * Azure AD login. If valid, loads user authorities from database and stores
- * them in request attributes.</p>
+ * <p>This filter checks for authenticated session state on all requests
+ * except excluded paths. If session is missing or not authenticated, redirects to
+ * Azure AD login. If valid, loads user info from session and populates
+ * SecurityContextHolder for Spring Security integration.</p>
  * 
  * @author Legacy App Integration
  * @version 1.0
@@ -36,7 +37,6 @@ public class AuthorizationFilter implements Filter {
     private Set<String> excludedPaths;
     private UserAuthorityService userAuthorityService;
     
-    private static final String USER_PRINCIPAL_COOKIE_NAME = "LEGACY_USER_PRINCIPAL";
     private static final String REQUEST_USER_PRINCIPAL_KEY = "userPrincipal";
     private static final String REQUEST_AUTHORITIES_KEY = "authorities";
     
@@ -67,7 +67,7 @@ public class AuthorizationFilter implements Filter {
     }
     
     /**
-     * Main filter logic - validates user principal cookie
+     * Main filter logic - validates HttpSession
      */
     public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
             throws IOException, ServletException {
@@ -91,45 +91,33 @@ public class AuthorizationFilter implements Filter {
             return;
         }
         
-        // Check for user principal cookie
-        String signedPrincipal = getCookieValue(httpRequest, USER_PRINCIPAL_COOKIE_NAME);
-        
-        if (signedPrincipal == null || signedPrincipal.length() == 0) {
-            System.out.println("AuthorizationFilter: No user principal cookie found, redirecting to login");
+        // Check for valid session
+        HttpSession session = httpRequest.getSession(false);
+        if (session == null) {
+            System.out.println("AuthorizationFilter: No session found, redirecting to login");
             redirectToLogin(httpRequest, httpResponse);
             return;
         }
         
-        // Verify and extract user principal from signed cookie
-        String userPrincipal = CookieSigningUtil.verifyAndExtractCookie(signedPrincipal);
+        Boolean authenticated = (Boolean) session.getAttribute("authenticated");
+        if (authenticated == null || !authenticated) {
+            System.out.println("AuthorizationFilter: Session not authenticated, redirecting to login");
+            redirectToLogin(httpRequest, httpResponse);
+            return;
+        }
         
+        String userPrincipal = (String) session.getAttribute("userPrincipal");
         if (userPrincipal == null || userPrincipal.length() == 0) {
-            System.err.println("AuthorizationFilter: Invalid or tampered cookie, redirecting to login");
+            System.err.println("AuthorizationFilter: No user principal in session, redirecting to login");
             redirectToLogin(httpRequest, httpResponse);
             return;
         }
         
-        System.out.println("AuthorizationFilter: Valid user principal: " + userPrincipal);
+        System.out.println("AuthorizationFilter: Valid session for user: " + userPrincipal);
         
-        // Load user authorities from database
-        Collection<String> authorities = null;
-        if (userAuthorityService != null) {
-            try {
-                authorities = userAuthorityService.loadAuthoritiesByUsername(userPrincipal);
-                
-                // If user not found in database, redirect to unauthorized
-                if (authorities == null || authorities.size() == 0) {
-                    System.err.println("AuthorizationFilter: User not found in database: " + userPrincipal);
-                    redirectToUnauthorized(httpRequest, httpResponse);
-                    return;
-                }
-            } catch (Exception e) {
-                System.err.println("AuthorizationFilter: Error loading authorities: " + e.getMessage());
-                e.printStackTrace();
-                redirectToUnauthorized(httpRequest, httpResponse);
-                return;
-            }
-        }
+        // Get authorities from session
+        Collection authorities = (Collection) session.getAttribute("oauth2_authorities");
+        Map userInfo = (Map) session.getAttribute("oauth2_user_info");
         
         if (authorities == null) {
             authorities = new ArrayList<String>();
@@ -137,9 +125,15 @@ public class AuthorizationFilter implements Filter {
         
         System.out.println("AuthorizationFilter: User authorized with " + authorities.size() + " authorities");
         
-        // Store user principal and authorities in request attributes
+        // Store user principal, authorities, and userInfo in request attributes for JSP/servlet access
         httpRequest.setAttribute(REQUEST_USER_PRINCIPAL_KEY, userPrincipal);
         httpRequest.setAttribute(REQUEST_AUTHORITIES_KEY, authorities);
+        if (userInfo != null) {
+            httpRequest.setAttribute("userInfo", userInfo);
+        }
+        
+        // Populate SecurityContextHolder for Spring Security integration
+        SecurityContextUtil.populateSecurityContext(session);
         
         // Continue filter chain
         chain.doFilter(request, response);
@@ -184,21 +178,6 @@ public class AuthorizationFilter implements Filter {
     }
     
     /**
-     * Get cookie value by name
-     */
-    private String getCookieValue(HttpServletRequest request, String name) {
-        Cookie[] cookies = request.getCookies();
-        if (cookies != null) {
-            for (int i = 0; i < cookies.length; i++) {
-                if (name.equals(cookies[i].getName())) {
-                    return cookies[i].getValue();
-                }
-            }
-        }
-        return null;
-    }
-    
-    /**
      * Redirect to login page
      */
     private void redirectToLogin(HttpServletRequest request, HttpServletResponse response)
@@ -208,17 +187,5 @@ public class AuthorizationFilter implements Filter {
             ? contextPath + "/login/oauth2/azure" 
             : "/login/oauth2/azure";
         response.sendRedirect(loginUrl);
-    }
-    
-    /**
-     * Redirect to unauthorized error page
-     */
-    private void redirectToUnauthorized(HttpServletRequest request, HttpServletResponse response)
-            throws IOException {
-        String contextPath = request.getContextPath();
-        String unauthorizedUrl = (contextPath != null && contextPath.length() > 0) 
-            ? contextPath + "/unauthorized" 
-            : "/unauthorized";
-        response.sendRedirect(unauthorizedUrl);
     }
 }

@@ -2,7 +2,6 @@ package com.example.legacyapp.filter;
 
 import com.example.legacyapp.service.UserAuthorityService;
 import com.example.legacyapp.service.UserAuthorityServiceImpl;
-import com.example.legacyapp.util.CookieSigningUtil;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
@@ -12,7 +11,6 @@ import javax.servlet.FilterConfig;
 import javax.servlet.ServletException;
 import javax.servlet.ServletRequest;
 import javax.servlet.ServletResponse;
-import javax.servlet.http.Cookie;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
@@ -40,8 +38,7 @@ import java.util.Set;
  * - Fetches user information from Microsoft Graph
  * - Loads additional authorities from the database
  * - Merges authorities from Azure AD and database
- * - Stores authentication state in session
- * - Sets authentication cookie for session persistence
+ * - Stores authentication state in HttpSession
  * 
  * This filter should be mapped to the OAuth2 callback path: /login/oauth2/code/azure
  * 
@@ -85,12 +82,6 @@ public class AzureADCallbackFilter implements Filter {
     private static final String PARAM_STATE = "state";
     private static final String PARAM_ERROR = "error";
     private static final String PARAM_ERROR_DESCRIPTION = "error_description";
-    
-    // Cookie configuration
-    private static final String AUTH_COOKIE_NAME = "LEGACY_AUTH";
-    private static final String AUTH_COOKIE_VALUE = "true";
-    private static final String USER_PRINCIPAL_COOKIE_NAME = "LEGACY_USER_PRINCIPAL";
-    private static final int AUTH_COOKIE_MAX_AGE = 1800; // 30 minutes
     
     /**
      * Initialize filter with configuration parameters
@@ -244,12 +235,9 @@ public class AzureADCallbackFilter implements Filter {
             System.out.println("AzureADCallbackFilter: Stored " + mergedAuthorities.size() + 
                              " authorities in session");
             
-            // Set authentication cookies
-            setCookie(response, AUTH_COOKIE_NAME, AUTH_COOKIE_VALUE, AUTH_COOKIE_MAX_AGE);
-            
-            // Create signed user principal cookie
-            String signedPrincipal = CookieSigningUtil.signCookie(username);
-            setCookie(response, USER_PRINCIPAL_COOKIE_NAME, signedPrincipal, AUTH_COOKIE_MAX_AGE);
+            // Store authentication state in session
+            session.setAttribute("authenticated", Boolean.TRUE);
+            session.setAttribute("userPrincipal", username);
             
             System.out.println("AzureADCallbackFilter: Authentication successful, redirecting to home");
             
@@ -411,22 +399,6 @@ public class AzureADCallbackFilter implements Filter {
         // }
         
         return new ArrayList<String>();
-    }
-    
-    /**
-     * Set an HTTP cookie
-     */
-    private void setCookie(HttpServletResponse response, String name, String value, int maxAge) {
-        Cookie cookie = new Cookie(name, value);
-        cookie.setPath("/");
-        cookie.setMaxAge(maxAge);
-        cookie.setHttpOnly(true);
-        // TODO: Enable Secure flag in production with HTTPS
-        // The Secure flag ensures cookie is only sent over HTTPS connections
-        // Uncomment the following line when deploying to production with HTTPS:
-        // cookie.setSecure(true);
-        response.addCookie(cookie);
-        System.out.println("AzureADCallbackFilter: Set cookie: " + name);
     }
     
     /**
