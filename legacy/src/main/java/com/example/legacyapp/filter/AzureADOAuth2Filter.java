@@ -11,7 +11,6 @@ import javax.servlet.FilterConfig;
 import javax.servlet.ServletException;
 import javax.servlet.ServletRequest;
 import javax.servlet.ServletResponse;
-import javax.servlet.http.Cookie;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
@@ -46,6 +45,8 @@ public class AzureADOAuth2Filter implements Filter {
     
     // Session attribute keys
     private static final String SESSION_STATE_KEY = "oauth2_state";
+    private static final String SESSION_AUTHENTICATED_KEY = "authenticated";
+    private static final String SESSION_USER_PRINCIPAL_KEY = "userPrincipal";
     private static final String SESSION_ACCESS_TOKEN_KEY = "oauth2_access_token";
     private static final String SESSION_ID_TOKEN_KEY = "oauth2_id_token";
     private static final String SESSION_USER_INFO_KEY = "oauth2_user_info";
@@ -139,25 +140,19 @@ public class AzureADOAuth2Filter implements Filter {
     }
     
     /**
-     * Check if user is authenticated (has valid access token in session or auth cookie)
+     * Check if user is authenticated (has valid session set by AzureADCallbackFilter)
      */
     private boolean isAuthenticated(HttpServletRequest request, HttpSession session) {
-        // First check session for access token
-        String accessToken = (String) session.getAttribute(SESSION_ACCESS_TOKEN_KEY);
-        if (accessToken != null && accessToken.length() > 0) {
+        // Check session for authenticated flag (set by AzureADCallbackFilter)
+        Boolean authenticated = (Boolean) session.getAttribute(SESSION_AUTHENTICATED_KEY);
+        if (authenticated != null && authenticated.booleanValue()) {
             return true;
         }
         
-        // Fallback: check for LEGACY_AUTH cookie
-        Cookie[] cookies = request.getCookies();
-        if (cookies != null) {
-            for (int i = 0; i < cookies.length; i++) {
-                Cookie cookie = cookies[i];
-                if ("LEGACY_AUTH".equals(cookie.getName()) && 
-                    "true".equals(cookie.getValue())) {
-                    return true;
-                }
-            }
+        // Fallback: check for access token (legacy key)
+        String accessToken = (String) session.getAttribute(SESSION_ACCESS_TOKEN_KEY);
+        if (accessToken != null && accessToken.length() > 0) {
+            return true;
         }
         
         return false;
