@@ -19,6 +19,19 @@ import java.util.List;
  * SecurityContextHolder, allowing legacy applications to leverage Spring Security features
  * while using simple session-based authentication.</p>
  * 
+ * <p><strong>Performance Guarantee:</strong> This utility performs ONLY session attribute 
+ * lookups with O(1) complexity. No database calls or external service calls are made. 
+ * User authorities are assumed to be pre-loaded and stored in the session during the 
+ * initial authentication process (e.g., by AzureADCallbackFilter).</p>
+ * 
+ * <p><strong>Usage Pattern:</strong></p>
+ * <ul>
+ *   <li><strong>During Login (once):</strong> AzureADCallbackFilter loads authorities from 
+ *       database and stores them in session, then calls populateSecurityContext()</li>
+ *   <li><strong>On Every Request:</strong> AuthorizationFilter calls populateSecurityContext() 
+ *       to refresh SecurityContextHolder from session data only</li>
+ * </ul>
+ * 
  * @author Legacy App Integration
  * @version 1.0
  */
@@ -35,6 +48,11 @@ public class SecurityContextUtil {
      * <p>Reads authentication state from session and creates a Spring Security
      * Authentication object. If session is null or not authenticated, clears
      * the SecurityContextHolder.</p>
+     * 
+     * <p><strong>Performance:</strong> This method performs ONLY in-memory session 
+     * attribute lookups. No database queries or external service calls are made. 
+     * The method assumes authorities have been pre-loaded and stored in session 
+     * during the authentication process.</p>
      * 
      * @param session the HTTP session containing authentication state
      */

@@ -1,7 +1,5 @@
 package com.example.legacyapp.filter;
 
-import com.example.legacyapp.service.UserAuthorityService;
-import com.example.legacyapp.service.UserAuthorityServiceImpl;
 import com.example.legacyapp.util.SecurityContextUtil;
 
 import javax.servlet.Filter;
@@ -29,13 +27,17 @@ import java.util.Set;
  * Azure AD login. If valid, loads user info from session and populates
  * SecurityContextHolder for Spring Security integration.</p>
  * 
+ * <p><strong>Performance Note:</strong> This filter performs NO database operations.
+ * It only reads authentication state from the HTTP session (O(1) operation) and
+ * populates the Spring Security context. User authorities are loaded once during
+ * login by AzureADCallbackFilter and reused from session on every request.</p>
+ * 
  * @author Legacy App Integration
  * @version 1.0
  */
 public class AuthorizationFilter implements Filter {
     
     private Set<String> excludedPaths;
-    private UserAuthorityService userAuthorityService;
     
     // Session attribute keys - must match AzureADCallbackFilter
     private static final String SESSION_AUTHENTICATED_KEY = "authenticated";
@@ -66,10 +68,6 @@ public class AuthorizationFilter implements Filter {
         }
         
         System.out.println("AuthorizationFilter: Excluded paths: " + excludedPaths);
-        
-        // Initialize user authority service
-        userAuthorityService = new UserAuthorityServiceImpl();
-        
         System.out.println("AuthorizationFilter initialized");
     }
     

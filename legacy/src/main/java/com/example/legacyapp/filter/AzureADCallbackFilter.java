@@ -2,6 +2,7 @@ package com.example.legacyapp.filter;
 
 import com.example.legacyapp.service.UserAuthorityService;
 import com.example.legacyapp.service.UserAuthorityServiceImpl;
+import com.example.legacyapp.util.SecurityContextUtil;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
@@ -240,6 +241,10 @@ public class AzureADCallbackFilter implements Filter {
             // Store authentication state in session
             session.setAttribute(SESSION_AUTHENTICATED_KEY, Boolean.TRUE);
             session.setAttribute(SESSION_USER_PRINCIPAL_KEY, username);
+            
+            // ⭐ CRITICAL: Populate SecurityContextHolder immediately after successful login
+            // This ensures Spring Security features are available right away, not just on the next request
+            SecurityContextUtil.populateSecurityContext(session);
             
             System.out.println("AzureADCallbackFilter: Authentication successful, redirecting to home");
             
