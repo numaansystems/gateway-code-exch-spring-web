@@ -15,9 +15,17 @@ import java.util.List;
  * Utility to integrate HttpSession authentication with Spring SecurityContextHolder.
  * Java 6 compatible implementation.
  * 
+ * <p><strong>Performance Characteristics:</strong> This utility is designed for high-performance
+ * request handling. All methods in this class ONLY read from existing HttpSession attributes
+ * and do NOT make any database calls or external service calls.</p>
+ * 
  * <p>This utility bridges the gap between session-based authentication and Spring Security's
  * SecurityContextHolder, allowing legacy applications to leverage Spring Security features
  * while using simple session-based authentication.</p>
+ * 
+ * <p><strong>Architecture Note:</strong> User authorities are loaded from the database once
+ * during login by AzureADCallbackFilter and stored in the session. This utility simply reads
+ * those pre-loaded authorities from the session on each request, ensuring fast request processing.</p>
  * 
  * @author Legacy App Integration
  * @version 1.0
@@ -32,11 +40,19 @@ public class SecurityContextUtil {
     /**
      * Populate SecurityContextHolder from HttpSession attributes.
      * 
+     * <p><strong>Performance:</strong> This method ONLY reads from the provided HttpSession
+     * and does NOT make any database calls or external service calls. It is designed to be
+     * called on every request with minimal overhead.</p>
+     * 
      * <p>Reads authentication state from session and creates a Spring Security
      * Authentication object. If session is null or not authenticated, clears
      * the SecurityContextHolder.</p>
      * 
-     * @param session the HTTP session containing authentication state
+     * <p><strong>Note:</strong> User authorities should already be loaded and stored in
+     * the session by AzureADCallbackFilter during login. This method simply reads those
+     * pre-loaded authorities from the session.</p>
+     * 
+     * @param session the HTTP session containing authentication state (authorities pre-loaded)
      */
     @SuppressWarnings("unchecked")
     public static void populateSecurityContext(HttpSession session) {
