@@ -1,7 +1,5 @@
 package com.example.legacyapp.filter;
 
-import com.example.legacyapp.service.UserAuthorityService;
-import com.example.legacyapp.service.UserAuthorityServiceImpl;
 import com.example.legacyapp.util.SecurityContextUtil;
 
 import javax.servlet.Filter;
@@ -21,13 +19,24 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Authorization filter that validates HttpSession on every request.
+ * Authorization filter that validates HttpSession authentication on every request.
  * Java 6 compatible implementation.
+ * 
+ * <p><strong>Performance Note:</strong> This filter is optimized for high throughput.
+ * It ONLY reads from existing session attributes and does NOT make any database calls.
+ * User authorities are loaded from the database once during login by AzureADCallbackFilter
+ * and then cached in the session for the duration of the user's session.</p>
  * 
  * <p>This filter checks for authenticated session state on all requests
  * except excluded paths. If session is missing or not authenticated, redirects to
  * Azure AD login. If valid, loads user info from session and populates
  * SecurityContextHolder for Spring Security integration.</p>
+ * 
+ * <p><strong>Separation of Concerns:</strong></p>
+ * <ul>
+ *   <li><strong>AuthorizationFilter (this class)</strong>: Validates authentication on every request (no DB calls)</li>
+ *   <li><strong>AzureADCallbackFilter</strong>: Loads authorities from database once during OAuth2 login</li>
+ * </ul>
  * 
  * @author Legacy App Integration
  * @version 1.0
@@ -35,7 +44,6 @@ import java.util.Set;
 public class AuthorizationFilter implements Filter {
     
     private Set<String> excludedPaths;
-    private UserAuthorityService userAuthorityService;
     
     // Session attribute keys - must match AzureADCallbackFilter
     private static final String SESSION_AUTHENTICATED_KEY = "authenticated";
@@ -66,11 +74,7 @@ public class AuthorizationFilter implements Filter {
         }
         
         System.out.println("AuthorizationFilter: Excluded paths: " + excludedPaths);
-        
-        // Initialize user authority service
-        userAuthorityService = new UserAuthorityServiceImpl();
-        
-        System.out.println("AuthorizationFilter initialized");
+        System.out.println("AuthorizationFilter initialized (authentication validation only - no DB calls)");
     }
     
     /**
